@@ -59,9 +59,9 @@
 ![Landing Page](Landing_Page.png)  
 *Elegant input interface with animations and gradient styling*
 
-![Robustness Curve](Robustness_Curve.png)  
+![Robustness Curve](Robustenss_Curve.png)  
 *Dramatic targeted (red) vs. random (green) collapse curves*
-
+  
 ![Interactive Network Graph](Network_Graph.png)  
 *Fully interactive PPI visualization – node size/color by degree*
 
