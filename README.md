@@ -13,6 +13,8 @@
 
 **NetFragile** is a modern, interactive web application designed to explore the **vulnerability and robustness** of biological networks. Users input a species TaxID and seed genes from a pathway of interest — the tool instantly:
 
+*Inspired by Veritasium's exploration of randomness and prediction in large systems ('The Strange Math That Predicts (Almost) Anything'), NetFragile applies similar ideas to reveal the surprising vulnerability of biological networks.*
+
 - Fetches **high-confidence protein-protein interactions (PPI)** from the STRING database 🧑‍🔬
 - Constructs and visualizes the **induced sub-network**
 - Identifies **potential drug targets** via centrality (hubs & bottlenecks)
