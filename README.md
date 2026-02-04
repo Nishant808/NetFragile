@@ -75,16 +75,6 @@
 
 ---
 
-## 🚀 Why This Project Stands Out
-
-This project showcases:
-- Seamless **integration of public bioinformatics APIs** (STRING)
-- Application of **network science algorithms** (centrality, attack simulations)
-- Effective **communication of complex biology** through interactive visuals
-
-Perfect for **drug target prioritization** and hypothesis generation: *"What happens if we specifically hit the hubs in this pathway?"*
-
----
 
 ## ▶️ How to Run Locally
 
