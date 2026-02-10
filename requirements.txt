@@ -1,0 +1,5 @@
+dash==4.0.0
+networkx==3.6.1
+pandas==3.0.0
+plotly==6.5.2
+Requests==2.32.5
