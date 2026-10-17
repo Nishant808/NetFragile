@@ -301,16 +301,17 @@ class NetworkAnalyzer:
             x1, y1 = pos[edge[1]]
             edge_x.extend([x0, x1, None])
             edge_y.extend([y0, y1, None])
-            weight = self.graph.edges[edge]['weight']
+            weight = self.graph.edges[edge].get('weight', 1)
             edge_hover.extend([f'Edge: {edge[0]}-{edge[1]}<br>Weight: {weight:.0f}'] * 3)
         
         edge_trace = go.Scatter(
             x=edge_x, y=edge_y,
-            line=dict(width=0.5, color='grey', opacity=0.5),
+            line=dict(width=0.5, color='grey'),
             hoverinfo='text',
             text=edge_hover,
             mode='lines',
-            showlegend=False
+            showlegend=False,
+            opacity=0.5
         )
         
         # Nodes
@@ -350,10 +351,10 @@ class NetworkAnalyzer:
                     title=dict(text='Node Degree', side='right'),
                 ),
                 line_width=1,
-                line_color='DarkSlateGrey',
-                opacity=0.8
+                line_color='DarkSlateGrey'
             ),
-            name='Nodes'
+            name='Nodes',
+            opacity=0.8
         )
         
         fig = go.Figure(data=[edge_trace, node_trace])
@@ -389,7 +390,7 @@ class NetworkAnalyzer:
             'Nodes': self.graph.number_of_nodes(),
             'Edges': self.graph.number_of_edges(),
             'Density': f"{nx.density(self.graph):.4f}",
-            'Avg Clustering': f"{nx.average_clustering_coefficient(self.graph):.4f}",
+            'Avg Clustering': f"{nx.average_clustering(self.graph):.4f}",
             'Is Connected': nx.is_connected(self.graph),
             'Components': nx.number_connected_components(self.graph),
             'Diameter': nx.diameter(self.graph) if nx.is_connected(self.graph) else 'N/A',
