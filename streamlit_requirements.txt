@@ -1,0 +1,7 @@
+# Streamlit App Requirements
+streamlit==1.35.0
+networkx==3.6.1
+pandas==3.0.0
+plotly==6.5.2
+requests==2.32.5
+openpyxl==3.1.2
