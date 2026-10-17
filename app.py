@@ -1,442 +1,1497 @@
-import networkx as nx
-import plotly.graph_objects as go
-import requests
-import io
-import pandas as pd
-import random
+"""
+NetFragile 2.0: Multi-Network Comparative Analysis Tool
+
+Interactive Dash application for analyzing biological network robustness
+with support for multiple EdgeR DEG files, comparative analysis, and
+normalizing target discovery.
+"""
+
 import dash
-from dash import dcc, html, Input, Output, State, callback
+from dash import dcc, html, Input, Output, State, callback, ctx
 from dash.exceptions import PreventUpdate
+import plotly.graph_objects as go
+import plotly.express as px
+import networkx as nx
+import pandas as pd
+import numpy as np
+import base64
+import io
+import json
+import time
+from typing import List, Dict, Any, Optional, Tuple
+import logging
+
+# Import utilities
+from utils.file_parser import EdgeRParser, parse_deg_file
+from utils.network_builder import NetworkBuilder, build_network_from_genes
+from utils.robustness import RobustnessAnalyzer, simulate_removal
+from utils.comparison import NetworkComparator, calculate_similarity_matrix
+from utils.normalizing import NormalizingTargetFinder
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Constants
+HUMAN_TAXID = 9606
+DEFAULT_REQUIRED_SCORE = 700
+DEFAULT_ADD_NODES = 200
 
 
-class MycothiolRealWorldModel:
-    def __init__(self):
+class NetworkData:
+    """Container for network data and analysis results."""
+    
+    def __init__(self, factor_name: str):
+        self.factor_name = factor_name
+        self.gene_list = []
         self.graph = None
         self.degree_cent = None
         self.betweenness_cent = None
-        self.rand_res = None
-        self.targ_res = None
-
-    def fetch_real_data(self, species_id, seed_genes):
-        """
-        Fetches real PPI data from STRING Database API.
-        """
-        print(f"[Step 1] Fetching real data for species (TaxID: {species_id})...")
-        print(f" Seeding network with genes: {', '.join(seed_genes)}")
-
-        # STRING API Endpoint
-        url = "https://string-db.org/api/tsv/network"
-
-        params = {
-            "identifiers": "%0d".join(seed_genes),  # Input genes
-            "species": species_id,
-            "add_nodes": 200,  # Expand network to find neighbors (build a cluster)
-            "required_score": 700,  # High confidence interactions only (>0.7)
-            "network_type": "functional"
+        self.rand_curve = None  # (x, y)
+        self.targ_curve = None  # (x, y)
+        self.metrics = {}
+        self.metadata = {}
+        self.centrality_results = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'factor_name': self.factor_name,
+            'gene_list': self.gene_list,
+            'metrics': self.metrics,
+            'metadata': self.metadata,
+            'rand_curve': {'x': self.rand_curve[0], 'y': self.rand_curve[1]} if self.rand_curve else None,
+            'targ_curve': {'x': self.targ_curve[0], 'y': self.targ_curve[1]} if self.targ_curve else None,
         }
-
-        try:
-            response = requests.get(url, params=params)
-            response.raise_for_status()
-
-            # Parse TSV data into a Graph
-            data = response.text
-            df = pd.read_csv(io.StringIO(data), sep="\t")
-
-            self.graph = nx.Graph()
-            # Build graph from edge list
-            for _, row in df.iterrows():
-                p1 = row['preferredName_A']
-                p2 = row['preferredName_B']
-                score = row['score']
-                self.graph.add_edge(p1, p2, weight=score)
-
-            # Keep only the largest connected component for stable analysis
-            largest_cc = max(nx.connected_components(self.graph), key=len)
-            self.graph = self.graph.subgraph(largest_cc).copy()
-
-            print(
-                f" [Success] Real Graph Built: {self.graph.number_of_nodes()} nodes, {self.graph.number_of_edges()} edges.")
-            return True, f"Success: Graph built with {self.graph.number_of_nodes()} nodes and {self.graph.number_of_edges()} edges."
-
-        except Exception as e:
-            print(f" [Error] Could not fetch data: {e}")
-            return False, f"Error: Could not fetch data - {str(e)}"
-
-    def analyze_centrality(self):
-        """
-        Calculates centrality to identify Real-World Targets (Hubs & Bottlenecks).
-        """
-        if self.graph is None:
-            return "Graph not built yet."
-
-        print("\n[Analysis] Calculating Centrality Metrics...")
-
-        # 1. Degree Centrality (Hubs)
-        self.degree_cent = nx.degree_centrality(self.graph)
-
-        # 2. Betweenness Centrality (Bottlenecks)
-        self.betweenness_cent = nx.betweenness_centrality(self.graph)
-
-        # Sort and find top targets
-        top_hubs = sorted(self.degree_cent.items(), key=lambda x: x[1], reverse=True)[:5]
-        top_bottlenecks = sorted(self.betweenness_cent.items(), key=lambda x: x[1], reverse=True)[:5]
-
-        output = "\n >>> TOP DRUG TARGETS (Real Proteins):\n"
-        output += f" Top 5 Hubs (high degree nodes, potential key players in the network): {[n for n, v in top_hubs]}\n"
-        output += f" Top 5 Bottlenecks (high betweenness, control information flow): {[n for n, v in top_bottlenecks]}\n"
-        output += "\nExplanation: Hubs are proteins with many interactions, making them good targets for broad disruption. \nBottlenecks are critical bridges in the network; targeting them can fragment the network efficiently."
-
-        return output
-
-    def _simulate_removal(self, node_order):
-        """
-        Simulates sequential removal of nodes and tracks LCC size.
-        """
-        G_temp = self.graph.copy()
-        lcc_sizes = []
-        n_removed = []
-        initial_size = len(G_temp)
-
-        for i, node in enumerate(node_order):
-            if node in G_temp:
-                G_temp.remove_node(node)
-
-            if len(G_temp) > 0:
-                # Calculate fraction of remaining network
-                largest_cc = len(max(nx.connected_components(G_temp), key=len))
-                lcc_sizes.append(largest_cc / initial_size)
-            else:
-                lcc_sizes.append(0)
-
-            n_removed.append((i + 1) / initial_size)
-
-            # Stop if network is effectively destroyed (<5% remaining)
-            if lcc_sizes[-1] < 0.05:
-                break
-
-        return n_removed, lcc_sizes
-
-    def robustness_test(self):
-        """
-        Compare Random Drug vs. Targeted Drug on the real network.
-        """
-        if self.graph is None:
-            return "Graph not built yet."
-
-        print("\n[Step 2] Simulating Drug Attacks on Network...")
-
-        nodes = list(self.graph.nodes())
-
-        # Strategy A: Random Attack
-        random_order = nodes.copy()
-        random.shuffle(random_order)
-        rand_x, rand_y = self._simulate_removal(random_order)
-        self.rand_res = (rand_x, rand_y)
-
-        # Strategy B: Targeted Attack (Degree Centrality)
-        degree_dict = dict(self.graph.degree())
-        targeted_order = sorted(degree_dict, key=degree_dict.get, reverse=True)
-        targ_x, targ_y = self._simulate_removal(targeted_order)
-        self.targ_res = (targ_x, targ_y)
-
-        output = "\nExplanation: The robustness test simulates drug effects. Random attacks mimic non-specific drugs, removing nodes randomly.\n Targeted attacks mimic specific drugs hitting high-degree hubs, disrupting the network faster."
-
-        return output
-
-    def get_robustness_figure(self):
-        if self.rand_res is None or self.targ_res is None:
-            return None
-
-        rand_x, rand_y = self.rand_res
-        targ_x, targ_y = self.targ_res
-
-        fig = go.Figure()
-
-        fig.add_trace(go.Scatter(
-            x=rand_x,
-            y=rand_y,
-            mode='lines+markers',
-            name='Random Drug (Non-specific)',
-            line=dict(color='green', width=3),
-            marker=dict(size=6),
-            hovertemplate='Fraction Removed: %{x:.2f}<br>Integrity: %{y:.2f}<extra></extra>'
-        ))
-
-        fig.add_trace(go.Scatter(
-            x=targ_x,
-            y=targ_y,
-            mode='lines+markers',
-            name='Targeted Drug (Anti-Hub)',
-            line=dict(color='red', width=3, dash='dash'),
-            marker=dict(size=6),
-            hovertemplate='Fraction Removed: %{x:.2f}<br>Integrity: %{y:.2f}<extra></extra>'
-        ))
-
-        fig.update_layout(
-            title={
-                'text': f'Robustness of Sub-network<br>(Nodes: {self.graph.number_of_nodes()}, Edges: {self.graph.number_of_edges()})',
-                'y': 0.95,
-                'x': 0.5,
-                'xanchor': 'center',
-                'yanchor': 'top',
-                'font': dict(size=20)
-            },
-            xaxis_title='Fraction of Proteome Knocked Out',
-            yaxis_title='Network Integrity (LCC Size)',
-            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01, bgcolor='rgba(255,255,255,0.8)'),
-            plot_bgcolor='white',
-            font=dict(size=14),
-            hovermode='closest',
-            height=600
-        )
-
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey', zeroline=True, zerolinewidth=2,
-                         zerolinecolor='Black')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey', zeroline=True, zerolinewidth=2,
-                         zerolinecolor='Black')
-
-        return fig
-
-    def get_network_figure(self):
-        if self.graph is None:
-            return None
-
-        print("\n[Visualization] Generating interactive network graph...")
-
-        # Compute positions
-        pos = nx.spring_layout(self.graph, seed=42)
-
-        # Edges
-        edge_x = []
-        edge_y = []
-        edge_hover = []
-        for edge in self.graph.edges():
-            x0, y0 = pos[edge[0]]
-            x1, y1 = pos[edge[1]]
-            edge_x.extend([x0, x1, None])
-            edge_y.extend([y0, y1, None])
-            weight = self.graph.edges[edge]['weight']
-            edge_hover.extend(
-                [f'Edge: {edge[0]}-{edge[1]}<br>Weight: {weight:.2f}'] * 3)  # Repeat for each segment including None
-
-        edge_trace = go.Scatter(
-            x=edge_x, y=edge_y,
-            line=dict(width=0.5, color='grey'),
-            hoverinfo='text',
-            text=edge_hover,
-            mode='lines'
-        )
-
-        # Nodes
-        node_x = []
-        node_y = []
-        node_text = []
-        node_degree = dict(self.graph.degree())
-        max_degree = max(node_degree.values()) if node_degree else 1
-        node_size = [15 + 10 * (node_degree[node] / max_degree) for node in self.graph.nodes()]
-        node_color = [node_degree[node] for node in self.graph.nodes()]
-
-        for node in self.graph.nodes():
-            x, y = pos[node]
-            node_x.append(x)
-            node_y.append(y)
-            deg = node_degree[node]
-            node_text.append(f'Node: {node}<br>Degree: {deg}')
-
-        node_trace = go.Scatter(
-            x=node_x, y=node_y,
-            mode='markers+text',
-            hoverinfo='text',
-            text=node_text,
-            marker=dict(
-                showscale=True,
-                colorscale='YlGnBu',
-                reversescale=True,
-                color=node_color,
-                size=node_size,
-                colorbar=dict(
-                    thickness=15,
-                    title=dict(text='Node Degree', side='right'),
-                    xanchor='left'
-                ),
-                line_width=2
-            ),
-            textfont=dict(size=8)
-        )
-
-        fig = go.Figure(data=[edge_trace, node_trace],
-                        layout=go.Layout(
-                            title={
-                                'text': 'Interactive Network Graph<br>Hover over nodes/edges for details. Zoom and pan enabled.',
-                                'y': 0.95,
-                                'x': 0.5,
-                                'xanchor': 'center',
-                                'yanchor': 'top',
-                                'font': dict(size=20)
-                            },
-                            showlegend=False,
-                            hovermode='closest',
-                            margin=dict(b=20, l=5, r=5, t=40),
-                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                            plot_bgcolor='white',
-                            height=800
-                        ))
-
-        return fig
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'NetworkData':
+        """Create from dictionary."""
+        nd = cls(data['factor_name'])
+        nd.gene_list = data.get('gene_list', [])
+        nd.metrics = data.get('metrics', {})
+        nd.metadata = data.get('metadata', {})
+        
+        if data.get('rand_curve'):
+            nd.rand_curve = (data['rand_curve']['x'], data['rand_curve']['y'])
+        if data.get('targ_curve'):
+            nd.targ_curve = (data['targ_curve']['x'], data['targ_curve']['y'])
+        
+        return nd
 
 
-# Initialize the model
-model = MycothiolRealWorldModel()
+class AppState:
+    """Global application state."""
+    
+    def __init__(self):
+        self.networks = {}  # {factor_name: NetworkData}
+        self.uploaded_files = {}  # {factor_name: file_content}
+        self.similarity_matrix = None
+        self.normalizing_results = None
+        self.comparison_metrics = None
+        self.last_analysis_time = None
 
-# Create Dash app
-app = dash.Dash(__name__)
+
+# Initialize app state
+app_state = AppState()
+
+# Initialize Dash app
+app = dash.Dash(__name__, suppress_callback_exceptions=True)
+app.title = "NetFragile 2.0"
+
+
+# ============================================================================
+# LAYOUT
+# ============================================================================
 
 app.layout = html.Div(
     style={
         'fontFamily': 'Arial, sans-serif',
         'padding': '20px',
-        'maxWidth': '1200px',
+        'maxWidth': '1400px',
         'margin': 'auto',
         'background': 'linear-gradient(to bottom right, #e0eafc, #cfdef3)',
     },
     children=[
+        # Header
         html.Div(
-            dcc.Markdown("""
-                <style>
-                    @keyframes fadeIn {
-                        from { opacity: 0; transform: translateY(20px); }
-                        to { opacity: 1; transform: translateY(0); }
-                    }
-                    .fade-in {
-                        animation: fadeIn 0.8s ease-out;
-                    }
-                    .button {
-                        transition: all 0.3s ease;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                    }
-                    .button:hover {
-                        transform: scale(1.05);
-                        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-                    }
-                    .graph-container {
-                        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-                        border-radius: 8px;
-                        background: white;
-                        padding: 10px;
-                        margin-top: 30px;
-                    }
-                    h1 {
-                        text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
-                    }
-                    .input-container {
-                        background: white;
-                        border-radius: 10px;
-                        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-                        padding: 20px;
-                    }
-                </style>
-            """, dangerously_allow_html=True)
-        ),
-
-
-        html.H1("NetFragile", style={'textAlign': 'center', 'color': '#2C3E50'}),
-        html.H3("Simulate targeted drug attacks on biological networks using real STRING PPI data" , style={'textAlign': 'center', 'color': '#2C3E50'}),
-
-        html.Div(
-            className='input-container',
+            style={'textAlign': 'center', 'marginBottom': '30px'},
             children=[
-                html.Label("Species ID (e.g., 83332 for M. tuberculosis H37Rv):",
-                           style={'fontWeight': 'bold', 'fontSize': '16px'}),
-                dcc.Input(id='species-id', type='number', value=83332,
-                          style={'width': '100%', 'marginBottom': '15px', 'padding': '10px', 'borderRadius': '5px',
-                                 'border': '1px solid #ddd'}),
-
-                html.Label("Seed Genes (comma-separated, e.g., Rv0486, Rv1170, Rv2130c, Rv0819, Rv1082):",
-                           style={'fontWeight': 'bold', 'fontSize': '16px'}),
-                dcc.Input(id='seed-genes', type='text', value='Rv0486, Rv1170, Rv2130c, Rv0819, Rv1082',
-                          style={'width': '100%', 'marginBottom': '15px', 'padding': '10px', 'borderRadius': '5px',
-                                 'border': '1px solid #ddd'}),
-
-                html.Button('Fetch Data and Analyze', id='submit-button', n_clicks=0,
-                            className='button',
-                            style={'backgroundColor': '#3498DB', 'color': 'white', 'border': 'none',
-                                   'padding': '12px 24px', 'borderRadius': '5px', 'cursor': 'pointer', 'width': '100%',
-                                   'fontSize': '16px'}),
+                html.H1("NetFragile 2.0", style={'color': '#2C3E50', 'textShadow': '1px 1px 2px rgba(0,0,0,0.1)'}),
+                html.H3("Multi-Network Comparative Analysis for Drug Target Discovery", 
+                       style={'color': '#2C3E50', 'marginTop': '10px'}),
             ]
         ),
-
-        dcc.Loading(
-            id='loading-output',
-            type='circle',
-            children=html.Div(id='output-container', className='fade-in',
-                              style={'marginTop': '30px', 'background': 'white', 'padding': '20px',
-                                     'borderRadius': '10px', 'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'}),
+        
+        # Tabs
+        dcc.Tabs(
+            id='main-tabs',
+            value='upload',
+            style={'marginBottom': '20px'},
+            children=[
+                dcc.Tab(label='📤 Upload Files', value='upload', style={'fontWeight': 'bold'}),
+                dcc.Tab(label='🔍 Individual Networks', value='individual', style={'fontWeight': 'bold'}),
+                dcc.Tab(label='📊 Comparison', value='comparison', style={'fontWeight': 'bold'}),
+                dcc.Tab(label='🎯 Normalizing Targets', value='normalizing', style={'fontWeight': 'bold'}),
+                dcc.Tab(label='🌐 Network Graphs', value='graphs', style={'fontWeight': 'bold'}),
+            ]
         ),
-
-        html.Div(
-            className='graph-container fade-in',
-            children=dcc.Graph(id='robustness-graph')
-        ),
-
-        html.Div(
-            id='network-explanation',
-            className='fade-in',
-            style={'marginTop': '20px', 'backgroundColor': '#E9ECEF', 'padding': '15px', 'borderRadius': '8px',
-                   'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'},
-            children="Explanation: This graph shows proteins as nodes (size and color by degree) and interactions as edges. Larger, darker nodes are hubs. Interactivity allows zooming, panning, and hovering for details."
-        ),
-
-        html.Div(
-            className='graph-container fade-in',
-            children=dcc.Graph(id='network-graph')
-        ),
+        
+        # Tab content
+        html.Div(id='tab-content'),
+        
+        # Store components
+        dcc.Store(id='networks-store'),
+        dcc.Store(id='analysis-store'),
+        dcc.Store(id='normalizing-results-store'),
+        dcc.Download(id='download-csv'),
+        dcc.Download(id='download-json'),
+        dcc.Download(id='download-normalizing-csv'),
     ]
 )
 
 
-@callback(
-    [Output('output-container', 'children'),
-     Output('robustness-graph', 'figure'),
-     Output('network-graph', 'figure')],
-    [Input('submit-button', 'n_clicks')],
-    [State('species-id', 'value'),
-     State('seed-genes', 'value')]
-)
-def update_analysis(n_clicks, species_id, seed_genes_str):
-    if n_clicks == 0:
-        raise PreventUpdate
+# ============================================================================
+# TAB LAYOUTS
+# ============================================================================
 
-    if not species_id or not seed_genes_str:
-        return "Please provide species ID and seed genes.", {}, {}
-
-    seed_genes = [gene.strip() for gene in seed_genes_str.split(',')]
-
-    success, fetch_message = model.fetch_real_data(species_id, seed_genes)
-
-    if not success:
-        return fetch_message, {}, {}
-
-    centrality_output = model.analyze_centrality()
-    robustness_output = model.robustness_test()
-
-    output = html.Div([
-        html.H3("Fetch Result", style={'color': '#2980B9'}),
-        html.Pre(fetch_message, style={'backgroundColor': '#F8F9FA', 'padding': '10px', 'borderRadius': '5px'}),
-
-        html.H3("Centrality Analysis", style={'color': '#2980B9', 'marginTop': '20px'}),
-        html.Pre(centrality_output, style={'backgroundColor': '#F8F9FA', 'padding': '10px', 'borderRadius': '5px'}),
-
-        html.H3("Robustness Test", style={'color': '#2980B9', 'marginTop': '20px'}),
-        html.Pre(robustness_output, style={'backgroundColor': '#F8F9FA', 'padding': '10px', 'borderRadius': '5px'}),
+def upload_tab_layout():
+    """Layout for the upload tab."""
+    return html.Div([
+        html.Div(
+            style={
+                'background': 'white',
+                'padding': '25px',
+                'borderRadius': '10px',
+                'boxShadow': '0 4px 8px rgba(0,0,0,0.1)',
+                'marginBottom': '20px'
+            },
+            children=[
+                html.H3("Upload EdgeR DEG Files", style={'color': '#2C3E50', 'marginBottom': '20px'}),
+                html.P(
+                    "Upload your EdgeR differential expression output files (CSV/TSV). "
+                    "Each file will be used to construct a network for comparative analysis.",
+                    style={'color': '#7F8C8D', 'marginBottom': '20px'}
+                ),
+                
+                # File upload section
+                html.Div(id='file-upload-section'),
+                
+                html.Button(
+                    '+ Add Another File',
+                    id='add-file-button',
+                    n_clicks=0,
+                    style={
+                        'backgroundColor': '#3498DB',
+                        'color': 'white',
+                        'border': 'none',
+                        'padding': '10px 20px',
+                        'borderRadius': '5px',
+                        'cursor': 'pointer',
+                        'marginTop': '15px',
+                        'fontSize': '14px',
+                        'fontWeight': 'bold'
+                    }
+                ),
+                
+                # Settings
+                html.Hr(style={'margin': '30px 0'}),
+                html.H4("Analysis Settings", style={'color': '#2C3E50'}),
+                
+                html.Div(
+                    style={'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '20px', 'marginTop': '15px'},
+                    children=[
+                        html.Div([
+                            html.Label("STRING Confidence Score:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                            dcc.Dropdown(
+                                id='required-score',
+                                options=[
+                                    {'label': 'Low (400)', 'value': 400},
+                                    {'label': 'Medium (700)', 'value': 700},
+                                    {'label': 'High (900)', 'value': 900},
+                                ],
+                                value=DEFAULT_REQUIRED_SCORE,
+                                style={'width': '100%'}
+                            ),
+                        ]),
+                        html.Div([
+                            html.Label("Additional Nodes:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                            dcc.Dropdown(
+                                id='add-nodes',
+                                options=[
+                                    {'label': '0', 'value': 0},
+                                    {'label': '50', 'value': 50},
+                                    {'label': '100', 'value': 100},
+                                    {'label': '200', 'value': 200},
+                                    {'label': '500', 'value': 500},
+                                ],
+                                value=DEFAULT_ADD_NODES,
+                                style={'width': '100%'}
+                            ),
+                        ]),
+                    ]
+                ),
+                
+                html.Div(
+                    style={'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '20px', 'marginTop': '15px'},
+                    children=[
+                        html.Div([
+                            html.Label("Filter by p-value:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                            dcc.Input(
+                                id='pvalue-threshold',
+                                type='number',
+                                value=0.05,
+                                step=0.01,
+                                min=0,
+                                max=1,
+                                style={'width': '100%', 'padding': '8px', 'borderRadius': '5px', 'border': '1px solid #ddd'}
+                            ),
+                        ]),
+                        html.Div([
+                            html.Label("Filter by |logFC|:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                            dcc.Input(
+                                id='logfc-threshold',
+                                type='number',
+                                value=1.0,
+                                step=0.5,
+                                min=0,
+                                style={'width': '100%', 'padding': '8px', 'borderRadius': '5px', 'border': '1px solid #ddd'}
+                            ),
+                        ]),
+                    ]
+                ),
+                
+                # Filter type
+                html.Div(
+                    style={'marginTop': '15px'},
+                    children=[
+                        html.Label("Apply Filters:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                        dcc.Checklist(
+                            id='apply-filters',
+                            options=[
+                                {'label': ' p-value', 'value': 'pvalue'},
+                                {'label': ' |logFC|', 'value': 'logfc'},
+                            ],
+                            value=['pvalue', 'logfc'],
+                            inline=True,
+                            style={'fontSize': '14px'}
+                        ),
+                    ]
+                ),
+                
+                # Run analysis button
+                html.Hr(style={'margin': '30px 0'}),
+                html.Div(
+                    style={'textAlign': 'center'},
+                    children=[
+                        html.Button(
+                            '🚀 RUN COMPARATIVE ANALYSIS',
+                            id='run-analysis-button',
+                            n_clicks=0,
+                            style={
+                                'backgroundColor': '#27AE60',
+                                'color': 'white',
+                                'border': 'none',
+                                'padding': '15px 30px',
+                                'borderRadius': '5px',
+                                'cursor': 'pointer',
+                                'fontSize': '16px',
+                                'fontWeight': 'bold',
+                                'boxShadow': '0 4px 8px rgba(0,0,0,0.2)'
+                            }
+                        ),
+                    ]
+                ),
+                
+                # Progress and status
+                html.Div(id='upload-status', style={'marginTop': '20px', 'textAlign': 'center'}),
+                dcc.Loading(
+                    id='analysis-loading',
+                    type='circle',
+                    children=html.Div(id='analysis-output')
+                ),
+            ]
+        ),
     ])
 
-    robustness_fig = model.get_robustness_figure() or {}
-    network_fig = model.get_network_figure() or {}
 
-    return output, robustness_fig, network_fig
+def individual_tab_layout():
+    """Layout for the individual networks tab."""
+    return html.Div([
+        html.Div(
+            style={
+                'background': 'white',
+                'padding': '25px',
+                'borderRadius': '10px',
+                'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
+            },
+            children=[
+                html.H3("Individual Network Analysis", style={'color': '#2C3E50', 'marginBottom': '20px'}),
+                
+                # Network selector
+                html.Div(
+                    style={'marginBottom': '20px'},
+                    children=[
+                        html.Label("Select Network:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                        dcc.Dropdown(
+                            id='individual-network-selector',
+                            options=[],
+                            value=None,
+                            style={'width': '300px'}
+                        ),
+                    ]
+                ),
+                
+                # Network info
+                html.Div(id='individual-network-info', style={'marginBottom': '30px'}),
+                
+                # Tabs for individual network
+                dcc.Tabs(
+                    id='individual-subtabs',
+                    value='robustness',
+                    children=[
+                        dcc.Tab(label='Robustness Curves', value='robustness'),
+                        dcc.Tab(label='Network Graph', value='graph'),
+                        dcc.Tab(label='Centrality Analysis', value='centrality'),
+                    ]
+                ),
+                
+                html.Div(id='individual-subtab-content', style={'marginTop': '20px'}),
+            ]
+        ),
+    ])
 
+
+def comparison_tab_layout():
+    """Layout for the comparison tab."""
+    return html.Div([
+        html.Div(
+            style={
+                'background': 'white',
+                'padding': '25px',
+                'borderRadius': '10px',
+                'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
+            },
+            children=[
+                html.H3("Network Comparison", style={'color': '#2C3E50', 'marginBottom': '20px'}),
+                
+                # Curve type selector
+                html.Div(
+                    style={'marginBottom': '20px'},
+                    children=[
+                        html.Label("Curve Type:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                        dcc.RadioItems(
+                            id='comparison-curve-type',
+                            options=[
+                                {'label': ' Targeted Removal', 'value': 'targ'},
+                                {'label': ' Random Removal', 'value': 'rand'},
+                            ],
+                            value='targ',
+                            inline=True,
+                            style={'fontSize': '14px'}
+                        ),
+                    ]
+                ),
+                
+                # Overlay plot
+                html.Div(
+                    style={
+                        'background': '#F8F9FA',
+                        'padding': '15px',
+                        'borderRadius': '8px',
+                        'marginBottom': '30px'
+                    },
+                    children=[
+                        html.H4("Overlay Robustness Curves", style={'color': '#2C3E50'}),
+                        dcc.Graph(id='comparison-overlay-plot'),
+                    ]
+                ),
+                
+                # Similarity matrix
+                html.Div(
+                    style={
+                        'background': '#F8F9FA',
+                        'padding': '15px',
+                        'borderRadius': '8px',
+                        'marginBottom': '30px'
+                    },
+                    children=[
+                        html.H4("Network Similarity Matrix", style={'color': '#2C3E50'}),
+                        html.Div(id='similarity-matrix'),
+                    ]
+                ),
+                
+                # Metrics table
+                html.Div(
+                    style={
+                        'background': '#F8F9FA',
+                        'padding': '15px',
+                        'borderRadius': '8px',
+                    },
+                    children=[
+                        html.H4("Network Metrics", style={'color': '#2C3E50'}),
+                        html.Div(id='comparison-metrics'),
+                    ]
+                ),
+            ]
+        ),
+    ])
+
+
+def normalizing_tab_layout():
+    """Layout for the normalizing targets tab."""
+    return html.Div([
+        html.Div(
+            style={
+                'background': 'white',
+                'padding': '25px',
+                'borderRadius': '10px',
+                'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
+            },
+            children=[
+                html.H3("Normalizing Target Discovery", style={'color': '#2C3E50', 'marginBottom': '20px'}),
+                html.P(
+                    "Find genes in the target network whose removal makes its robustness "
+                    "profile resemble the reference network.",
+                    style={'color': '#7F8C8D', 'marginBottom': '20px'}
+                ),
+                
+                # Network selectors
+                html.Div(
+                    style={'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '20px', 'marginBottom': '20px'},
+                    children=[
+                        html.Div([
+                            html.Label("Target Network:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                            dcc.Dropdown(
+                                id='normalizing-target-network',
+                                options=[],
+                                value=None,
+                                style={'width': '100%'}
+                            ),
+                        ]),
+                        html.Div([
+                            html.Label("Reference Network:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                            dcc.Dropdown(
+                                id='normalizing-reference-network',
+                                options=[],
+                                value=None,
+                                style={'width': '100%'}
+                            ),
+                        ]),
+                    ]
+                ),
+                
+                # Run button
+                html.Div(
+                    style={'textAlign': 'center', 'marginBottom': '20px'},
+                    children=[
+                        html.Button(
+                            '🔍 FIND NORMALIZING TARGETS',
+                            id='find-targets-button',
+                            n_clicks=0,
+                            style={
+                                'backgroundColor': '#E74C3C',
+                                'color': 'white',
+                                'border': 'none',
+                                'padding': '12px 25px',
+                                'borderRadius': '5px',
+                                'cursor': 'pointer',
+                                'fontSize': '14px',
+                                'fontWeight': 'bold'
+                            }
+                        ),
+                    ]
+                ),
+                
+                # Progress
+                dcc.Loading(
+                    id='normalizing-loading',
+                    type='circle',
+                    children=html.Div(id='normalizing-status')
+                ),
+                
+                # Results
+                html.Div(id='normalizing-results'),
+            ]
+        ),
+    ])
+
+
+def graphs_tab_layout():
+    """Layout for the network graphs tab."""
+    return html.Div([
+        html.Div(
+            style={
+                'background': 'white',
+                'padding': '25px',
+                'borderRadius': '10px',
+                'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
+            },
+            children=[
+                html.H3("Network Visualizations", style={'color': '#2C3E50', 'marginBottom': '20px'}),
+                
+                # Network selector
+                html.Div(
+                    style={'marginBottom': '20px'},
+                    children=[
+                        html.Label("Select Network:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                        dcc.Dropdown(
+                            id='graph-network-selector',
+                            options=[],
+                            value=None,
+                            style={'width': '300px'}
+                        ),
+                    ]
+                ),
+                
+                # Graph display
+                html.Div(
+                    style={
+                        'background': '#F8F9FA',
+                        'padding': '15px',
+                        'borderRadius': '8px',
+                    },
+                    children=[
+                        dcc.Graph(id='network-graph-display'),
+                    ]
+                ),
+                
+                # Graph info
+                html.Div(id='graph-info', style={'marginTop': '20px'}),
+            ]
+        ),
+    ])
+
+
+# ============================================================================
+# CALLBACKS
+# ============================================================================
+
+# File upload callbacks
+@callback(
+    Output('file-upload-section', 'children'),
+    Input('add-file-button', 'n_clicks'),
+    State('file-upload-section', 'children'),
+    prevent_initial_call=True
+)
+def add_file_upload(n_clicks, children):
+    """Add a new file upload component."""
+    if children is None:
+        children = []
+    
+    # Count existing uploads
+    num_uploads = len([c for c in children if isinstance(c, dict) and 'props' in c and 'id' in c['props'] and 'file-upload' in c['props']['id']])
+    
+    new_upload = html.Div(
+        id=f'file-upload-{num_uploads}',
+        style={
+            'background': '#F8F9FA',
+            'padding': '15px',
+            'borderRadius': '8px',
+            'marginBottom': '15px',
+            'border': '2px dashed #BDC3C7'
+        },
+        children=[
+            html.Div(
+                style={'display': 'flex', 'gap': '15px', 'alignItems': 'center'},
+                children=[
+                    dcc.Upload(
+                        id=f'file-upload-{num_uploads}',
+                        children=html.Button(
+                            f'Select File {num_uploads + 1}',
+                            style={
+                                'backgroundColor': '#3498DB',
+                                'color': 'white',
+                                'border': 'none',
+                                'padding': '10px 20px',
+                                'borderRadius': '5px',
+                                'cursor': 'pointer'
+                            }
+                        ),
+                        multiple=False,
+                        style={'flex': '1'}
+                    ),
+                    dcc.Input(
+                        id=f'factor-name-{num_uploads}',
+                        type='text',
+                        placeholder=f'Factor {num_uploads + 1} Name',
+                        value=f'Condition_{num_uploads + 1}',
+                        style={
+                            'flex': '1',
+                            'padding': '10px',
+                            'borderRadius': '5px',
+                            'border': '1px solid #ddd'
+                        }
+                    ),
+                    html.Button(
+                        '✕',
+                        id=f'remove-file-{num_uploads}',
+                        n_clicks=0,
+                        style={
+                            'backgroundColor': '#E74C3C',
+                            'color': 'white',
+                            'border': 'none',
+                            'padding': '10px',
+                            'borderRadius': '5px',
+                            'cursor': 'pointer',
+                            'width': '40px'
+                        }
+                    ),
+                ]
+            ),
+            html.Div(id=f'file-info-{num_uploads}', style={'marginTop': '10px', 'fontSize': '12px', 'color': '#7F8C8D'})
+        ]
+    )
+    
+    children.append(new_upload)
+    return children
+
+
+@callback(
+    [Output(f'file-info-{i}', 'children') for i in range(20)],
+    [Input(f'file-upload-{i}', 'contents') for i in range(20)],
+    [State(f'file-upload-{i}', 'filename') for i in range(20)],
+    prevent_initial_call=True
+)
+def update_file_info(*args):
+    """Update file info displays."""
+    outputs = []
+    
+    for i in range(0, len(args), 2):
+        content = args[i]
+        filename = args[i + 1]
+        
+        if content is not None:
+            # Parse file to get info
+            try:
+                parser = EdgeRParser()
+                info = parser.get_file_info(filename)
+                if 'error' in info:
+                    outputs.append(f"Error: {info['error']}")
+                else:
+                    outputs.append(f"✓ {filename} | {info['row_count']} rows | Gene column: {info['detected_gene_column']}")
+            except Exception as e:
+                outputs.append(f"Error: {str(e)}")
+        else:
+            outputs.append("No file selected")
+    
+    return outputs
+
+
+# Main analysis callback
+@callback(
+    [Output('networks-store', 'data'),
+     Output('upload-status', 'children'),
+     Output('analysis-output', 'children')],
+    Input('run-analysis-button', 'n_clicks'),
+    [State(f'file-upload-{i}', 'contents') for i in range(20)],
+    [State(f'factor-name-{i}', 'value') for i in range(20)],
+    [State(f'file-upload-{i}', 'filename') for i in range(20)],
+    State('required-score', 'value'),
+    State('add-nodes', 'value'),
+    State('pvalue-threshold', 'value'),
+    State('logfc-threshold', 'value'),
+    State('apply-filters', 'value'),
+    prevent_initial_call=True
+)
+def run_comparative_analysis(n_clicks, *args):
+    """Run the complete comparative analysis pipeline."""
+    if n_clicks == 0:
+        raise PreventUpdate
+    
+    # Parse arguments
+    file_contents = args[0:20]
+    factor_names = args[20:40]
+    filenames = args[40:60]
+    required_score = args[60]
+    add_nodes = args[61]
+    pvalue_threshold = args[62]
+    logfc_threshold = args[63]
+    apply_filters = args[64]
+    
+    # Get valid uploads
+    uploads = []
+    for i in range(20):
+        if file_contents[i] is not None and factor_names[i]:
+            uploads.append({
+                'content': file_contents[i],
+                'filename': filenames[i],
+                'factor_name': factor_names[i]
+            })
+    
+    if not uploads:
+        return {}, "Please upload at least one file.", ""
+    
+    # Clear previous state
+    app_state.networks = {}
+    app_state.uploaded_files = {}
+    
+    status_messages = []
+    analysis_outputs = []
+    
+    # Process each file
+    for upload in uploads:
+        try:
+            # Parse file
+            content = upload['content']
+            filename = upload['filename']
+            factor_name = upload['factor_name']
+            
+            # Decode content
+            content_type, content_string = content.split(',')
+            decoded = base64.b64decode(content_string)
+            
+            # Save to temporary file
+            temp_path = f"/tmp/{filename}"
+            with open(temp_path, 'wb') as f:
+                f.write(decoded)
+            
+            # Parse DEG file
+            pvalue_filter = pvalue_threshold if 'pvalue' in apply_filters else None
+            logfc_filter = logfc_threshold if 'logfc' in apply_filters else None
+            
+            gene_list = parse_deg_file(
+                temp_path,
+                pvalue_threshold=pvalue_filter,
+                logfc_threshold=logfc_filter,
+                min_genes=10
+            )
+            
+            status_messages.append(f"✓ {factor_name}: {len(gene_list)} genes parsed")
+            
+            # Build network
+            builder = NetworkBuilder(HUMAN_TAXID)
+            graph, metadata = builder.build_network(
+                gene_list,
+                required_score=required_score,
+                add_nodes=add_nodes
+            )
+            
+            # Create NetworkData
+            nd = NetworkData(factor_name)
+            nd.gene_list = gene_list
+            nd.graph = graph
+            nd.metadata = metadata
+            
+            # Run robustness analysis
+            analyzer = RobustnessAnalyzer()
+            curves = analyzer.analyze_network(graph, ['random', 'degree'])
+            nd.rand_curve = curves['random']
+            nd.targ_curve = curves['degree']
+            
+            # Calculate centrality
+            if graph.number_of_nodes() > 0:
+                nd.degree_cent = nx.degree_centrality(graph)
+                nd.betweenness_cent = nx.betweenness_centrality(graph)
+                
+                # Get top hubs
+                top_hubs = sorted(nd.degree_cent.items(), key=lambda x: x[1], reverse=True)[:5]
+                nd.centrality_results = {
+                    'top_hubs': [n for n, v in top_hubs],
+                    'top_bottlenecks': []
+                }
+                
+                if graph.number_of_nodes() > 1:
+                    top_bottlenecks = sorted(nd.betweenness_cent.items(), key=lambda x: x[1], reverse=True)[:5]
+                    nd.centrality_results['top_bottlenecks'] = [n for n, v in top_bottlenecks]
+            
+            # Calculate metrics
+            nd.metrics = {
+                'nodes': graph.number_of_nodes(),
+                'edges': graph.number_of_edges(),
+                'density': nx.density(graph) if graph.number_of_nodes() > 1 else 0,
+                'avg_degree': sum(dict(graph.degree()).values()) / graph.number_of_nodes() if graph.number_of_nodes() > 0 else 0,
+            }
+            
+            # Store
+            app_state.networks[factor_name] = nd
+            app_state.uploaded_files[factor_name] = upload
+            
+            status_messages.append(f"✓ {factor_name}: Network built ({metadata['final_node_count']} nodes, {metadata['final_edge_count']} edges)")
+            
+        except Exception as e:
+            status_messages.append(f"✗ {upload.get('factor_name', 'Unknown')}: Error - {str(e)}")
+            logger.error(f"Error processing {upload.get('filename', 'unknown')}: {e}")
+    
+    # Calculate similarity matrix
+    if len(app_state.networks) > 1:
+        networks_data = {
+            name: {
+                'targ_curve': nd.targ_curve,
+                'rand_curve': nd.rand_curve,
+                'graph': nd.graph,
+                'metrics': nd.metrics
+            }
+            for name, nd in app_state.networks.items()
+        }
+        
+        comparator = NetworkComparator()
+        app_state.similarity_matrix = comparator.calculate_similarity_matrix(networks_data)
+        app_state.comparison_metrics = comparator.calculate_network_metrics(networks_data)
+        
+        status_messages.append("✓ Similarity matrix calculated")
+    
+    # Serialize networks for storage
+    networks_serialized = {
+        name: nd.to_dict()
+        for name, nd in app_state.networks.items()
+    }
+    
+    # Format status
+    status_html = html.Div([
+        html.H4("Analysis Complete!", style={'color': '#27AE60'}),
+        html.Ul([html.Li(msg) for msg in status_messages])
+    ])
+    
+    # Analysis summary
+    analysis_summary = html.Div([
+        html.H4(f"Successfully analyzed {len(app_state.networks)} networks", style={'color': '#2C3E50'}),
+        html.P(f"Networks: {', '.join(app_state.networks.keys())}")
+    ])
+    
+    return networks_serialized, status_html, analysis_summary
+
+
+# Individual network tab callbacks
+@callback(
+    Output('individual-network-selector', 'options'),
+    Input('networks-store', 'data'),
+    prevent_initial_call=True
+)
+def update_individual_selector(networks_data):
+    """Update network selector in individual tab."""
+    if networks_data:
+        options = [{'label': name, 'value': name} for name in networks_data.keys()]
+        return options
+    return []
+
+
+@callback(
+    Output('individual-network-info', 'children'),
+    Input('individual-network-selector', 'value'),
+    State('networks-store', 'data'),
+    prevent_initial_call=True
+)
+def update_individual_info(selected_network, networks_data):
+    """Update network info display."""
+    if not selected_network or not networks_data:
+        return html.Div("Select a network to view details.")
+    
+    nd = NetworkData.from_dict(networks_data[selected_network])
+    
+    return html.Div([
+        html.H4(f"Network: {selected_network}", style={'color': '#2C3E50'}),
+        html.Div(style={'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '15px'}, children=[
+            html.Div([
+                html.Strong("Nodes: "),
+                html.Span(str(nd.metrics.get('nodes', 'N/A')))
+            ]),
+            html.Div([
+                html.Strong("Edges: "),
+                html.Span(str(nd.metrics.get('edges', 'N/A')))
+            ]),
+            html.Div([
+                html.Strong("Density: "),
+                html.Span(f"{nd.metrics.get('density', 0):.4f}")
+            ]),
+            html.Div([
+                html.Strong("Avg Degree: "),
+                html.Span(f"{nd.metrics.get('avg_degree', 0):.2f}")
+            ]),
+        ]),
+        html.Hr(style={'margin': '15px 0'}),
+        html.Div([
+            html.Strong("Top Hubs: "),
+            html.Span(", ".join(nd.centrality_results.get('top_hubs', [])[:5]))
+        ]),
+        html.Div([
+            html.Strong("Top Bottlenecks: "),
+            html.Span(", ".join(nd.centrality_results.get('top_bottlenecks', [])[:5]))
+        ]),
+    ])
+
+
+@callback(
+    Output('individual-subtab-content', 'children'),
+    [Input('individual-subtabs', 'value'),
+     Input('individual-network-selector', 'value')],
+    State('networks-store', 'data'),
+    prevent_initial_call=True
+)
+def update_individual_subtab(subtab, selected_network, networks_data):
+    """Update content of individual network subtabs."""
+    if not selected_network or not networks_data:
+        return html.Div("Select a network to view details.")
+    
+    nd = NetworkData.from_dict(networks_data[selected_network])
+    
+    if subtab == 'robustness':
+        return html.Div([
+            dcc.Graph(
+                id='individual-robustness-plot',
+                figure=self._create_robustness_figure(nd)
+            )
+        ])
+    elif subtab == 'graph':
+        return html.Div([
+            dcc.Graph(
+                id='individual-network-graph',
+                figure=self._create_network_figure(nd)
+            )
+        ])
+    elif subtab == 'centrality':
+        return html.Div([
+            html.H4("Centrality Analysis", style={'color': '#2C3E50'}),
+            html.Div([
+                html.H5("Top Hubs (by Degree Centrality)", style={'color': '#2980B9'}),
+                html.Ul([html.Li(gene) for gene in nd.centrality_results.get('top_hubs', [])]),
+            ]),
+            html.Div([
+                html.H5("Top Bottlenecks (by Betweenness Centrality)", style={'color': '#2980B9'}),
+                html.Ul([html.Li(gene) for gene in nd.centrality_results.get('top_bottlenecks', [])]),
+            ]),
+        ])
+    
+    return html.Div()
+
+
+@callback(
+    Output('comparison-overlay-plot', 'figure'),
+    Input('comparison-curve-type', 'value'),
+    State('networks-store', 'data'),
+    prevent_initial_call=True
+)
+def update_comparison_overlay(curve_type, networks_data):
+    """Update overlay plot in comparison tab."""
+    if not networks_data:
+        return go.Figure()
+    
+    fig = go.Figure()
+    
+    colors = px.colors.qualitative.Set2
+    
+    for i, (name, data) in enumerate(networks_data.items()):
+        curve = data.get(f'{curve_type}_curve')
+        if curve:
+            x = curve['x']
+            y = curve['y']
+            color = colors[i % len(colors)]
+            
+            fig.add_trace(go.Scatter(
+                x=x,
+                y=y,
+                mode='lines+markers',
+                name=name,
+                line=dict(width=3, color=color),
+                marker=dict(size=6),
+                hovertemplate=f'{name}<br>Fraction Removed: %{{x:.2f}}<br>Integrity: %{{y:.2f}}<extra></extra>'
+            ))
+    
+    fig.update_layout(
+        title=f'Overlay Robustness Curves ({curve_type.capitalize()} Removal)',
+        xaxis_title='Fraction of Network Removed',
+        yaxis_title='Network Integrity (LCC Size)',
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        plot_bgcolor='white',
+        height=600,
+        hovermode='closest'
+    )
+    
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey')
+    
+    return fig
+
+
+@callback(
+    Output('similarity-matrix', 'children'),
+    Input('networks-store', 'data'),
+    prevent_initial_call=True
+)
+def update_similarity_matrix(networks_data):
+    """Update similarity matrix display."""
+    if not networks_data or len(networks_data) < 2:
+        return html.Div("Need at least 2 networks to calculate similarity.")
+    
+    # Recalculate similarity matrix
+    networks_for_comparison = {
+        name: {'targ_curve': (data['targ_curve']['x'], data['targ_curve']['y'])}
+        for name, data in networks_data.items()
+    }
+    
+    comparator = NetworkComparator()
+    sim_matrix = comparator.calculate_similarity_matrix(networks_for_comparison)
+    
+    # Create table
+    table_header = [html.Thead(html.Tr([html.Th("")] + [html.Th(name) for name in sim_matrix.columns]))]
+    
+    table_body = [
+        html.Tbody([
+            html.Tr([html.Th(row_name)] + [html.Td(f"{val:.2f}") for val in row])
+            for row_name, row in sim_matrix.iterrows()
+        ])
+    ]
+    
+    return html.Table(
+        table_header + table_body,
+        style={'width': '100%', 'borderCollapse': 'collapse'}
+    )
+
+
+@callback(
+    Output('comparison-metrics', 'children'),
+    Input('networks-store', 'data'),
+    prevent_initial_call=True
+)
+def update_comparison_metrics(networks_data):
+    """Update comparison metrics display."""
+    if not networks_data:
+        return html.Div("No networks to display.")
+    
+    # Create metrics table
+    metrics_list = []
+    for name, data in networks_data.items():
+        metrics_list.append({
+            'Network': name,
+            'Nodes': data['metrics'].get('nodes', 'N/A'),
+            'Edges': data['metrics'].get('edges', 'N/A'),
+            'Density': f"{data['metrics'].get('density', 0):.4f}",
+            'Avg Degree': f"{data['metrics'].get('avg_degree', 0):.2f}"
+        })
+    
+    df = pd.DataFrame(metrics_list)
+    
+    return html.Table(
+        [
+            html.Thead(html.Tr([html.Th(col) for col in df.columns]))
+        ] + [
+            html.Tbody([
+                html.Tr([html.Td(df.iloc[i][col]) for col in df.columns])
+                for i in range(len(df))
+            ])
+        ],
+        style={'width': '100%', 'borderCollapse': 'collapse'}
+    )
+
+
+@callback(
+    [Output('normalizing-target-network', 'options'),
+     Output('normalizing-reference-network', 'options')],
+    Input('networks-store', 'data'),
+    prevent_initial_call=True
+)
+def update_normalizing_selectors(networks_data):
+    """Update network selectors in normalizing tab."""
+    if networks_data:
+        options = [{'label': name, 'value': name} for name in networks_data.keys()]
+        return options, options
+    return [], []
+
+
+@callback(
+    [Output('normalizing-status', 'children'),
+     Output('normalizing-results', 'children')],
+    Input('find-targets-button', 'n_clicks'),
+    State('normalizing-target-network', 'value'),
+    State('normalizing-reference-network', 'value'),
+    State('networks-store', 'data'),
+    prevent_initial_call=True
+)
+def find_normalizing_targets(n_clicks, target_network, reference_network, networks_data):
+    """Find normalizing targets between two networks."""
+    if n_clicks == 0 or not target_network or not reference_network:
+        raise PreventUpdate
+    
+    if target_network == reference_network:
+        return "Please select different networks.", ""
+    
+    if not networks_data:
+        return "No networks available.", ""
+    
+    # Get networks
+    target_nd = NetworkData.from_dict(networks_data[target_network])
+    reference_nd = NetworkData.from_dict(networks_data[reference_network])
+    
+    if target_nd.graph is None or reference_nd.targ_curve is None:
+        return "Network data incomplete.", ""
+    
+    # Run normalizing target analysis
+    finder = NormalizingTargetFinder(max_workers=4)
+    
+    # Prepare data
+    target_data = {
+        'graph': target_nd.graph,
+        'targ_curve': target_nd.targ_curve
+    }
+    
+    reference_curve = reference_nd.targ_curve
+    
+    try:
+        results_df = finder.find_targets(
+            target_data,
+            reference_curve,
+            strategy='degree',
+            stop_threshold=0.05
+        )
+        
+        # Get reference gene list for annotation
+        reference_genes = list(reference_nd.graph.nodes()) if reference_nd.graph else []
+        top_results = finder.get_top_targets(results_df, top_n=20, reference_genes=reference_genes)
+        
+        # Create results display
+        if len(top_results) > 0:
+            results_html = html.Div([
+                html.H4(f"Top Normalizing Targets: {target_network} → {reference_network}", 
+                       style={'color': '#2C3E50', 'marginBottom': '20px'}),
+                
+                # Summary
+                html.Div([
+                    html.Strong("Original Similarity: "),
+                    html.Span(f"{results_df['similarity_score'].iloc[0]:.3f}" if len(results_df) > 0 else "N/A"),
+                    html.Span(" | "),
+                    html.Strong("Best Target Similarity: "),
+                    html.Span(f"{top_results['similarity_score'].iloc[0]:.3f}" if len(top_results) > 0 else "N/A")
+                ], style={'marginBottom': '15px', 'fontSize': '14px'}),
+                
+                # Table
+                html.Div(
+                    style={
+                        'overflowX': 'auto',
+                        'marginBottom': '20px'
+                    },
+                    children=[
+                        html.Table(
+                            [
+                                html.Thead(html.Tr([
+                                    html.Th('Rank'),
+                                    html.Th('Gene'),
+                                    html.Th('Similarity Score'),
+                                    html.Th('Effect Size'),
+                                    html.Th('Degree'),
+                                    html.Th('In Reference')
+                                ]))
+                            ] + [
+                                html.Tbody([
+                                    html.Tr([
+                                        html.Td(row['rank']),
+                                        html.Td(row['gene']),
+                                        html.Td(f"{row['similarity_score']:.3f}"),
+                                        html.Td(f"{row['effect_size']:+.3f}"),
+                                        html.Td(row['degree']),
+                                        html.Td('✓' if row['in_reference'] else '✗')
+                                    ])
+                                    for _, row in top_results.iterrows()
+                                ])
+                            ],
+                            style={'width': '100%', 'borderCollapse': 'collapse'}
+                        )
+                    ]
+                ),
+                
+                # Export buttons
+                html.Div([
+                    html.Button(
+                        '📥 Export to CSV',
+                        id='export-normalizing-csv',
+                        n_clicks=0,
+                        style={
+                            'backgroundColor': '#3498DB',
+                            'color': 'white',
+                            'border': 'none',
+                            'padding': '10px 20px',
+                            'borderRadius': '5px',
+                            'cursor': 'pointer',
+                            'marginRight': '10px'
+                        }
+                    ),
+                ]),
+                
+                # Before/After plot for top target
+                html.Div(
+                    style={
+                        'background': '#F8F9FA',
+                        'padding': '15px',
+                        'borderRadius': '8px',
+                        'marginTop': '20px'
+                    },
+                    children=[
+                        html.H4(f"Effect of Removing {top_results['gene'].iloc[0]}", 
+                               style={'color': '#2C3E50'}),
+                        dcc.Graph(
+                            id='normalizing-before-after-plot',
+                            figure=self._create_before_after_figure(
+                                target_nd, reference_nd, top_results.iloc[0]
+                            )
+                        )
+                    ]
+                ) if len(top_results) > 0 else None,
+                
+                # Store results for export
+                dcc.Store(id='normalizing-results-store', data=top_results.to_dict('records'))
+            ])
+        else:
+            results_html = html.Div("No normalizing targets found.")
+        
+        status = html.Div(f"✓ Analysis complete. Found {len(top_results)} potential normalizing targets.", 
+                         style={'color': '#27AE60', 'fontWeight': 'bold'})
+        
+        return status, results_html
+        
+    except Exception as e:
+        logger.error(f"Error finding normalizing targets: {e}")
+        return f"Error: {str(e)}", ""
+
+
+# Export callbacks
+@callback(
+    Output('download-normalizing-csv', 'data'),
+    Input('export-normalizing-csv', 'n_clicks'),
+    State('normalizing-results-store', 'data'),
+    prevent_initial_call=True
+)
+def export_normalizing_csv(n_clicks, results_data):
+    """Export normalizing targets to CSV."""
+    if n_clicks == 0 or not results_data:
+        raise PreventUpdate
+    
+    import pandas as pd
+    df = pd.DataFrame(results_data)
+    return dcc.send_data_frame(df.to_csv, f"normalizing_targets_{time.time()}.csv", index=False)
+
+
+@callback(
+    Output('graph-network-selector', 'options'),
+    Input('networks-store', 'data'),
+    prevent_initial_call=True
+)
+def update_graph_selector(networks_data):
+    """Update network selector in graphs tab."""
+    if networks_data:
+        return [{'label': name, 'value': name} for name in networks_data.keys()]
+    return []
+
+
+@callback(
+    Output('network-graph-display', 'figure'),
+    Input('graph-network-selector', 'value'),
+    State('networks-store', 'data'),
+    prevent_initial_call=True
+)
+def update_network_graph(selected_network, networks_data):
+    """Update network graph display."""
+    if not selected_network or not networks_data:
+        return go.Figure()
+    
+    nd = NetworkData.from_dict(networks_data[selected_network])
+    return self._create_network_figure(nd)
+
+
+@callback(
+    Output('graph-info', 'children'),
+    Input('graph-network-selector', 'value'),
+    State('networks-store', 'data'),
+    prevent_initial_call=True
+)
+def update_graph_info(selected_network, networks_data):
+    """Update graph info display."""
+    if not selected_network or not networks_data:
+        return ""
+    
+    nd = NetworkData.from_dict(networks_data[selected_network])
+    return html.Div([
+        html.Strong(f"{selected_network} Network: "),
+        html.Span(f"{nd.metrics.get('nodes', 0)} nodes, {nd.metrics.get('edges', 0)} edges")
+    ])
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def _create_robustness_figure(nd: NetworkData) -> go.Figure:
+    """Create a robustness curve figure for a single network."""
+    fig = go.Figure()
+    
+    if nd.rand_curve:
+        x, y = nd.rand_curve
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=y,
+            mode='lines+markers',
+            name='Random Removal',
+            line=dict(color='green', width=3),
+            marker=dict(size=6),
+            hovertemplate='Fraction Removed: %{x:.2f}<br>Integrity: %{y:.2f}<extra></extra>'
+        ))
+    
+    if nd.targ_curve:
+        x, y = nd.targ_curve
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=y,
+            mode='lines+markers',
+            name='Targeted Removal',
+            line=dict(color='red', width=3, dash='dash'),
+            marker=dict(size=6),
+            hovertemplate='Fraction Removed: %{x:.2f}<br>Integrity: %{y:.2f}<extra></extra>'
+        ))
+    
+    fig.update_layout(
+        title=f'Robustness Curves: {nd.factor_name}',
+        xaxis_title='Fraction of Network Removed',
+        yaxis_title='Network Integrity (LCC Size)',
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        plot_bgcolor='white',
+        height=500,
+        hovermode='closest'
+    )
+    
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey')
+    
+    return fig
+
+
+def _create_network_figure(nd: NetworkData) -> go.Figure:
+    """Create an interactive network graph figure."""
+    if nd.graph is None or nd.graph.number_of_nodes() == 0:
+        return go.Figure()
+    
+    # Compute positions
+    try:
+        pos = nx.spring_layout(nd.graph, seed=42)
+    except:
+        pos = nx.random_layout(nd.graph)
+    
+    # Edges
+    edge_x = []
+    edge_y = []
+    for edge in nd.graph.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+    
+    edge_trace = go.Scatter(
+        x=edge_x,
+        y=edge_y,
+        line=dict(width=0.5, color='grey'),
+        hoverinfo='none',
+        mode='lines'
+    )
+    
+    # Nodes
+    node_x = []
+    node_y = []
+    node_text = []
+    node_degree = dict(nd.graph.degree())
+    max_degree = max(node_degree.values()) if node_degree else 1
+    node_size = [10 + 8 * (node_degree[node] / max_degree) for node in nd.graph.nodes()]
+    node_color = [node_degree[node] for node in nd.graph.nodes()]
+    
+    for node in nd.graph.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        deg = node_degree[node]
+        node_text.append(f'Node: {node}<br>Degree: {deg}')
+    
+    node_trace = go.Scatter(
+        x=node_x,
+        y=node_y,
+        mode='markers',
+        hoverinfo='text',
+        text=node_text,
+        marker=dict(
+            showscale=True,
+            colorscale='YlGnBu',
+            reversescale=True,
+            color=node_color,
+            size=node_size,
+            colorbar=dict(
+                thickness=15,
+                title='Node Degree',
+            ),
+            line_width=1
+        )
+    )
+    
+    fig = go.Figure(data=[edge_trace, node_trace])
+    
+    fig.update_layout(
+        title=f'Network Graph: {nd.factor_name}<br><sub>Size by degree, color by degree</sub>',
+        showlegend=False,
+        hovermode='closest',
+        margin=dict(b=20, l=5, r=5, t=40),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        plot_bgcolor='white',
+        height=700
+    )
+    
+    return fig
+
+
+def _create_before_after_figure(target_nd: NetworkData, reference_nd: NetworkData, target_info: pd.Series) -> go.Figure:
+    """Create before/after plot for normalizing target."""
+    fig = go.Figure()
+    
+    # Original target curve
+    if target_nd.targ_curve:
+        x, y = target_nd.targ_curve
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=y,
+            mode='lines+markers',
+            name=f'{target_nd.factor_name} (Original)',
+            line=dict(color='red', width=3, dash='dash'),
+            marker=dict(size=6)
+        ))
+    
+    # Modified target curve (from target_info)
+    if 'curve_x' in target_info and 'curve_y' in target_info:
+        fig.add_trace(go.Scatter(
+            x=target_info['curve_x'],
+            y=target_info['curve_y'],
+            mode='lines+markers',
+            name=f'{target_nd.factor_name} - {target_info["gene"]}',
+            line=dict(color='orange', width=3),
+            marker=dict(size=6)
+        ))
+    
+    # Reference curve
+    if reference_nd.targ_curve:
+        x, y = reference_nd.targ_curve
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=y,
+            mode='lines+markers',
+            name=f'{reference_nd.factor_name} (Reference)',
+            line=dict(color='green', width=3),
+            marker=dict(size=6)
+        ))
+    
+    fig.update_layout(
+        title=f'Normalizing Effect: Removing {target_info["gene"]}',
+        xaxis_title='Fraction of Network Removed',
+        yaxis_title='Network Integrity (LCC Size)',
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        plot_bgcolor='white',
+        height=500,
+        hovermode='closest'
+    )
+    
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey')
+    
+    return fig
+
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    logger.info("Starting NetFragile 2.0...")
+    logger.info("Open http://localhost:8050 in your browser")
+    app.run_server(debug=True, host='0.0.0.0', port=8050)

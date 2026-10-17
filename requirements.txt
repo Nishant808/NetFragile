@@ -1,5 +1,7 @@
-dash==4.0.0
-networkx==3.6.1
-pandas==3.0.0
-plotly==6.5.2
-Requests==2.32.5
+dash>=2.0
+plotly>=5.0
+networkx>=3.0
+pandas>=2.0
+requests>=2.0
+numpy>=1.24
+scipy>=1.10
