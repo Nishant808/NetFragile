@@ -106,47 +106,226 @@ app.title = "NetFragile 2.0"
 
 app.layout = html.Div(
     style={
-        'fontFamily': 'Arial, sans-serif',
-        'padding': '20px',
-        'maxWidth': '1400px',
-        'margin': 'auto',
-        'background': 'linear-gradient(to bottom right, #e0eafc, #cfdef3)',
+        'fontFamily': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+        'padding': '0',
+        'margin': '0',
+        'minHeight': '100vh',
+        'background': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
     },
     children=[
-        # Header
+        # Header with shadow
         html.Div(
-            style={'textAlign': 'center', 'marginBottom': '30px'},
+            style={
+                'textAlign': 'center',
+                'padding': '40px 20px 20px',
+                'background': 'rgba(255, 255, 255, 0.95)',
+                'boxShadow': '0 4px 6px rgba(0,0,0,0.1)',
+                'marginBottom': '30px',
+                'borderRadius': '0 0 20px 20px',
+            },
             children=[
-                html.H1("NetFragile 2.0", style={'color': '#2C3E50', 'textShadow': '1px 1px 2px rgba(0,0,0,0.1)'}),
+                html.Div(
+                    style={
+                        'display': 'flex',
+                        'alignItems': 'center',
+                        'justifyContent': 'center',
+                        'gap': '20px',
+                        'marginBottom': '10px',
+                    },
+                    children=[
+                        html.Div(
+                            style={
+                                'fontSize': '48px',
+                                'color': '#667eea',
+                            },
+                            children=['🧬']
+                        ),
+                        html.H1("NetFragile 2.0", 
+                               style={
+                                   'color': '#2C3E50',
+                                   'margin': '0',
+                                   'fontSize': '42px',
+                                   'fontWeight': '700',
+                                   'textShadow': '2px 2px 4px rgba(0,0,0,0.1)',
+                               }),
+                    ]
+                ),
                 html.H3("Multi-Network Comparative Analysis for Drug Target Discovery", 
-                       style={'color': '#2C3E50', 'marginTop': '10px'}),
+                       style={
+                           'color': '#4A5568',
+                           'margin': '10px 0 0 0',
+                           'fontSize': '20px',
+                           'fontWeight': '500',
+                       }),
+                html.P(
+                    "Upload EdgeR DEG files → Build Networks → Find Normalizing Targets",
+                    style={
+                        'color': '#718096',
+                        'margin': '10px 0 0 0',
+                        'fontSize': '14px',
+                        'fontStyle': 'italic',
+                    }
+                ),
             ]
         ),
         
-        # Tabs
-        dcc.Tabs(
-            id='main-tabs',
-            value='upload',
-            style={'marginBottom': '20px'},
+        # Main content container
+        html.Div(
+            style={
+                'maxWidth': '1400px',
+                'margin': '0 auto',
+                'padding': '0 20px 40px',
+            },
             children=[
-                dcc.Tab(label='📤 Upload Files', value='upload', style={'fontWeight': 'bold'}),
-                dcc.Tab(label='🔍 Individual Networks', value='individual', style={'fontWeight': 'bold'}),
-                dcc.Tab(label='📊 Comparison', value='comparison', style={'fontWeight': 'bold'}),
-                dcc.Tab(label='🎯 Normalizing Targets', value='normalizing', style={'fontWeight': 'bold'}),
-                dcc.Tab(label='🌐 Network Graphs', value='graphs', style={'fontWeight': 'bold'}),
+                # Tabs with modern styling
+                html.Div(
+                    style={
+                        'background': 'rgba(255, 255, 255, 0.9)',
+                        'borderRadius': '12px',
+                        'boxShadow': '0 4px 12px rgba(0,0,0,0.1)',
+                        'padding': '0 10px',
+                        'marginBottom': '20px',
+                    },
+                    children=[
+                        dcc.Tabs(
+                            id='main-tabs',
+                            value='upload',
+                            style={'marginBottom': '0'},
+                            colors={
+                                'border': '#E2E8F0',
+                                'primary': '#667eea',
+                                'background': 'transparent',
+                            },
+                            children=[
+                                dcc.Tab(
+                                    label='📤 Upload',
+                                    value='upload',
+                                    style={
+                                        'padding': '12px 24px',
+                                        'fontWeight': '600',
+                                        'fontSize': '14px',
+                                        'borderRadius': '8px 8px 0 0',
+                                    },
+                                    selected_style={
+                                        'padding': '12px 24px',
+                                        'fontWeight': '600',
+                                        'fontSize': '14px',
+                                        'borderRadius': '8px 8px 0 0',
+                                        'backgroundColor': '#667eea',
+                                        'color': 'white',
+                                        'borderTop': '3px solid #667eea',
+                                    }
+                                ),
+                                dcc.Tab(
+                                    label='🔍 Individual',
+                                    value='individual',
+                                    style={
+                                        'padding': '12px 24px',
+                                        'fontWeight': '600',
+                                        'fontSize': '14px',
+                                        'borderRadius': '8px 8px 0 0',
+                                    },
+                                    selected_style={
+                                        'padding': '12px 24px',
+                                        'fontWeight': '600',
+                                        'fontSize': '14px',
+                                        'borderRadius': '8px 8px 0 0',
+                                        'backgroundColor': '#667eea',
+                                        'color': 'white',
+                                        'borderTop': '3px solid #667eea',
+                                    }
+                                ),
+                                dcc.Tab(
+                                    label='📊 Compare',
+                                    value='comparison',
+                                    style={
+                                        'padding': '12px 24px',
+                                        'fontWeight': '600',
+                                        'fontSize': '14px',
+                                        'borderRadius': '8px 8px 0 0',
+                                    },
+                                    selected_style={
+                                        'padding': '12px 24px',
+                                        'fontWeight': '600',
+                                        'fontSize': '14px',
+                                        'borderRadius': '8px 8px 0 0',
+                                        'backgroundColor': '#667eea',
+                                        'color': 'white',
+                                        'borderTop': '3px solid #667eea',
+                                    }
+                                ),
+                                dcc.Tab(
+                                    label='🎯 Targets',
+                                    value='normalizing',
+                                    style={
+                                        'padding': '12px 24px',
+                                        'fontWeight': '600',
+                                        'fontSize': '14px',
+                                        'borderRadius': '8px 8px 0 0',
+                                    },
+                                    selected_style={
+                                        'padding': '12px 24px',
+                                        'fontWeight': '600',
+                                        'fontSize': '14px',
+                                        'borderRadius': '8px 8px 0 0',
+                                        'backgroundColor': '#667eea',
+                                        'color': 'white',
+                                        'borderTop': '3px solid #667eea',
+                                    }
+                                ),
+                                dcc.Tab(
+                                    label='🌐 Graphs',
+                                    value='graphs',
+                                    style={
+                                        'padding': '12px 24px',
+                                        'fontWeight': '600',
+                                        'fontSize': '14px',
+                                        'borderRadius': '8px 8px 0 0',
+                                    },
+                                    selected_style={
+                                        'padding': '12px 24px',
+                                        'fontWeight': '600',
+                                        'fontSize': '14px',
+                                        'borderRadius': '8px 8px 0 0',
+                                        'backgroundColor': '#667eea',
+                                        'color': 'white',
+                                        'borderTop': '3px solid #667eea',
+                                    }
+                                ),
+                            ]
+                        ),
+                    ]
+                ),
+                
+                # Tab content
+                html.Div(id='tab-content'),
+                
+                # Store components
+                dcc.Store(id='networks-store'),
+                dcc.Store(id='analysis-store'),
+                dcc.Store(id='normalizing-results-store'),
+                dcc.Download(id='download-csv'),
+                dcc.Download(id='download-json'),
+                dcc.Download(id='download-normalizing-csv'),
             ]
         ),
         
-        # Tab content
-        html.Div(id='tab-content'),
-        
-        # Store components
-        dcc.Store(id='networks-store'),
-        dcc.Store(id='analysis-store'),
-        dcc.Store(id='normalizing-results-store'),
-        dcc.Download(id='download-csv'),
-        dcc.Download(id='download-json'),
-        dcc.Download(id='download-normalizing-csv'),
+        # Footer
+        html.Div(
+            style={
+                'textAlign': 'center',
+                'padding': '20px',
+                'color': 'rgba(255, 255, 255, 0.8)',
+                'fontSize': '14px',
+            },
+            children=[
+                html.P("NetFragile 2.0 | Built with ❤️ using Dash & Plotly | ", 
+                       style={'margin': '0'}),
+                html.A("View on GitHub", 
+                       href="https://github.com/Nishant808/NetFragile",
+                       style={'color': 'white', 'textDecoration': 'underline'}),
+            ]
+        ),
     ]
 )
 
@@ -160,43 +339,85 @@ def upload_tab_layout():
     return html.Div([
         html.Div(
             style={
-                'background': 'white',
-                'padding': '25px',
-                'borderRadius': '10px',
-                'boxShadow': '0 4px 8px rgba(0,0,0,0.1)',
-                'marginBottom': '20px'
+                'background': 'rgba(255, 255, 255, 0.95)',
+                'padding': '30px',
+                'borderRadius': '12px',
+                'boxShadow': '0 4px 12px rgba(0,0,0,0.15)',
+                'marginBottom': '20px',
+                'backdropFilter': 'blur(10px)',
             },
             children=[
-                html.H3("Upload EdgeR DEG Files", style={'color': '#2C3E50', 'marginBottom': '20px'}),
+                html.Div(
+                    style={
+                        'display': 'flex',
+                        'alignItems': 'center',
+                        'gap': '15px',
+                        'marginBottom': '20px',
+                    },
+                    children=[
+                        html.Div('📤', style={'fontSize': '32px'}),
+                        html.H3("Upload EdgeR DEG Files", 
+                               style={
+                                   'color': '#2C3E50',
+                                   'margin': '0',
+                                   'fontSize': '24px',
+                                   'fontWeight': '600',
+                               }),
+                    ]
+                ),
                 html.P(
                     "Upload your EdgeR differential expression output files (CSV/TSV). "
                     "Each file will be used to construct a network for comparative analysis.",
-                    style={'color': '#7F8C8D', 'marginBottom': '20px'}
+                    style={
+                        'color': '#4A5568',
+                        'marginBottom': '25px',
+                        'fontSize': '15px',
+                        'lineHeight': '1.6',
+                    }
                 ),
                 
                 # File upload section
                 html.Div(id='file-upload-section'),
                 
                 html.Button(
-                    '+ Add Another File',
+                    '➕ Add Another File',
                     id='add-file-button',
                     n_clicks=0,
                     style={
-                        'backgroundColor': '#3498DB',
+                        'backgroundColor': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                         'color': 'white',
                         'border': 'none',
-                        'padding': '10px 20px',
-                        'borderRadius': '5px',
+                        'padding': '12px 24px',
+                        'borderRadius': '8px',
                         'cursor': 'pointer',
                         'marginTop': '15px',
                         'fontSize': '14px',
-                        'fontWeight': 'bold'
+                        'fontWeight': '600',
+                        'boxShadow': '0 4px 8px rgba(102, 126, 234, 0.3)',
+                        'transition': 'all 0.3s ease',
                     }
                 ),
                 
                 # Settings
-                html.Hr(style={'margin': '30px 0'}),
-                html.H4("Analysis Settings", style={'color': '#2C3E50'}),
+                html.Hr(style={'margin': '30px 0', 'border': 'none', 'borderTop': '2px solid #E2E8F0'}),
+                html.Div(
+                    style={
+                        'display': 'flex',
+                        'alignItems': 'center',
+                        'gap': '12px',
+                        'marginBottom': '20px',
+                    },
+                    children=[
+                        html.Div('⚙️', style={'fontSize': '24px'}),
+                        html.H4("Analysis Settings", 
+                               style={
+                                   'color': '#2C3E50',
+                                   'margin': '0',
+                                   'fontSize': '18px',
+                                   'fontWeight': '600',
+                               }),
+                    ]
+                ),
                 
                 html.Div(
                     style={'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '20px', 'marginTop': '15px'},
@@ -280,7 +501,7 @@ def upload_tab_layout():
                 ),
                 
                 # Run analysis button
-                html.Hr(style={'margin': '30px 0'}),
+                html.Hr(style={'margin': '30px 0', 'border': 'none', 'borderTop': '2px solid #E2E8F0'}),
                 html.Div(
                     style={'textAlign': 'center'},
                     children=[
@@ -289,15 +510,17 @@ def upload_tab_layout():
                             id='run-analysis-button',
                             n_clicks=0,
                             style={
-                                'backgroundColor': '#27AE60',
+                                'backgroundColor': 'linear-gradient(135deg, #27AE60 0%, #229954 100%)',
                                 'color': 'white',
                                 'border': 'none',
-                                'padding': '15px 30px',
-                                'borderRadius': '5px',
+                                'padding': '16px 36px',
+                                'borderRadius': '10px',
                                 'cursor': 'pointer',
                                 'fontSize': '16px',
-                                'fontWeight': 'bold',
-                                'boxShadow': '0 4px 8px rgba(0,0,0,0.2)'
+                                'fontWeight': '700',
+                                'boxShadow': '0 6px 12px rgba(39, 174, 96, 0.3)',
+                                'transition': 'all 0.3s ease',
+                                'letterSpacing': '1px',
                             }
                         ),
                     ]
@@ -320,24 +543,50 @@ def individual_tab_layout():
     return html.Div([
         html.Div(
             style={
-                'background': 'white',
-                'padding': '25px',
-                'borderRadius': '10px',
-                'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
+                'background': 'rgba(255, 255, 255, 0.95)',
+                'padding': '30px',
+                'borderRadius': '12px',
+                'boxShadow': '0 4px 12px rgba(0,0,0,0.15)',
+                'backdropFilter': 'blur(10px)',
             },
             children=[
-                html.H3("Individual Network Analysis", style={'color': '#2C3E50', 'marginBottom': '20px'}),
+                html.Div(
+                    style={
+                        'display': 'flex',
+                        'alignItems': 'center',
+                        'gap': '15px',
+                        'marginBottom': '20px',
+                    },
+                    children=[
+                        html.Div('🔍', style={'fontSize': '32px'}),
+                        html.H3("Individual Network Analysis", 
+                               style={
+                                   'color': '#2C3E50',
+                                   'margin': '0',
+                                   'fontSize': '24px',
+                                   'fontWeight': '600',
+                               }),
+                    ]
+                ),
                 
                 # Network selector
                 html.Div(
-                    style={'marginBottom': '20px'},
+                    style={'marginBottom': '25px'},
                     children=[
-                        html.Label("Select Network:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                        html.Label("Select Network:", 
+                                  style={
+                                      'fontWeight': '600',
+                                      'marginBottom': '8px',
+                                      'display': 'block',
+                                      'color': '#4A5568',
+                                      'fontSize': '15px',
+                                  }),
                         dcc.Dropdown(
                             id='individual-network-selector',
                             options=[],
                             value=None,
-                            style={'width': '300px'}
+                            style={'width': '300px'},
+                            placeholder="Choose a network..."
                         ),
                     ]
                 ),
@@ -346,13 +595,58 @@ def individual_tab_layout():
                 html.Div(id='individual-network-info', style={'marginBottom': '30px'}),
                 
                 # Tabs for individual network
-                dcc.Tabs(
-                    id='individual-subtabs',
-                    value='robustness',
+                html.Div(
+                    style={
+                        'background': 'rgba(255, 255, 255, 0.8)',
+                        'borderRadius': '8px',
+                        'padding': '0 10px',
+                        'boxShadow': '0 2px 8px rgba(0,0,0,0.1)',
+                    },
                     children=[
-                        dcc.Tab(label='Robustness Curves', value='robustness'),
-                        dcc.Tab(label='Network Graph', value='graph'),
-                        dcc.Tab(label='Centrality Analysis', value='centrality'),
+                        dcc.Tabs(
+                            id='individual-subtabs',
+                            value='robustness',
+                            colors={
+                                'border': '#E2E8F0',
+                                'primary': '#667eea',
+                                'background': 'transparent',
+                            },
+                            children=[
+                                dcc.Tab(
+                                    label='Robustness Curves',
+                                    value='robustness',
+                                    style={'padding': '10px 20px', 'fontWeight': '500'},
+                                    selected_style={
+                                        'padding': '10px 20px',
+                                        'fontWeight': '600',
+                                        'backgroundColor': '#667eea',
+                                        'color': 'white',
+                                    }
+                                ),
+                                dcc.Tab(
+                                    label='Network Graph',
+                                    value='graph',
+                                    style={'padding': '10px 20px', 'fontWeight': '500'},
+                                    selected_style={
+                                        'padding': '10px 20px',
+                                        'fontWeight': '600',
+                                        'backgroundColor': '#667eea',
+                                        'color': 'white',
+                                    }
+                                ),
+                                dcc.Tab(
+                                    label='Centrality Analysis',
+                                    value='centrality',
+                                    style={'padding': '10px 20px', 'fontWeight': '500'},
+                                    selected_style={
+                                        'padding': '10px 20px',
+                                        'fontWeight': '600',
+                                        'backgroundColor': '#667eea',
+                                        'color': 'white',
+                                    }
+                                ),
+                            ]
+                        ),
                     ]
                 ),
                 
@@ -367,19 +661,44 @@ def comparison_tab_layout():
     return html.Div([
         html.Div(
             style={
-                'background': 'white',
-                'padding': '25px',
-                'borderRadius': '10px',
-                'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
+                'background': 'rgba(255, 255, 255, 0.95)',
+                'padding': '30px',
+                'borderRadius': '12px',
+                'boxShadow': '0 4px 12px rgba(0,0,0,0.15)',
+                'backdropFilter': 'blur(10px)',
             },
             children=[
-                html.H3("Network Comparison", style={'color': '#2C3E50', 'marginBottom': '20px'}),
+                html.Div(
+                    style={
+                        'display': 'flex',
+                        'alignItems': 'center',
+                        'gap': '15px',
+                        'marginBottom': '20px',
+                    },
+                    children=[
+                        html.Div('📊', style={'fontSize': '32px'}),
+                        html.H3("Network Comparison", 
+                               style={
+                                   'color': '#2C3E50',
+                                   'margin': '0',
+                                   'fontSize': '24px',
+                                   'fontWeight': '600',
+                               }),
+                    ]
+                ),
                 
                 # Curve type selector
                 html.Div(
-                    style={'marginBottom': '20px'},
+                    style={'marginBottom': '25px'},
                     children=[
-                        html.Label("Curve Type:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                        html.Label("Curve Type:", 
+                                  style={
+                                      'fontWeight': '600',
+                                      'marginBottom': '10px',
+                                      'display': 'block',
+                                      'color': '#4A5568',
+                                      'fontSize': '15px',
+                                  }),
                         dcc.RadioItems(
                             id='comparison-curve-type',
                             options=[
@@ -388,7 +707,8 @@ def comparison_tab_layout():
                             ],
                             value='targ',
                             inline=True,
-                            style={'fontSize': '14px'}
+                            style={'fontSize': '14px'},
+                            labelStyle={'marginRight': '20px'}
                         ),
                     ]
                 ),
@@ -396,27 +716,31 @@ def comparison_tab_layout():
                 # Overlay plot
                 html.Div(
                     style={
-                        'background': '#F8F9FA',
-                        'padding': '15px',
-                        'borderRadius': '8px',
-                        'marginBottom': '30px'
+                        'background': 'rgba(255, 255, 255, 0.8)',
+                        'padding': '20px',
+                        'borderRadius': '10px',
+                        'marginBottom': '25px',
+                        'boxShadow': '0 2px 8px rgba(0,0,0,0.05)',
                     },
                     children=[
-                        html.H4("Overlay Robustness Curves", style={'color': '#2C3E50'}),
-                        dcc.Graph(id='comparison-overlay-plot'),
+                        html.H4("📈 Overlay Robustness Curves", 
+                               style={'color': '#2C3E50', 'marginBottom': '15px', 'fontSize': '18px'}),
+                        dcc.Graph(id='comparison-overlay-plot', config={'displayModeBar': True}),
                     ]
                 ),
                 
                 # Similarity matrix
                 html.Div(
                     style={
-                        'background': '#F8F9FA',
-                        'padding': '15px',
-                        'borderRadius': '8px',
-                        'marginBottom': '30px'
+                        'background': 'rgba(255, 255, 255, 0.8)',
+                        'padding': '20px',
+                        'borderRadius': '10px',
+                        'marginBottom': '25px',
+                        'boxShadow': '0 2px 8px rgba(0,0,0,0.05)',
                     },
                     children=[
-                        html.H4("Network Similarity Matrix", style={'color': '#2C3E50'}),
+                        html.H4("🔗 Network Similarity Matrix", 
+                               style={'color': '#2C3E50', 'marginBottom': '15px', 'fontSize': '18px'}),
                         html.Div(id='similarity-matrix'),
                     ]
                 ),
@@ -424,12 +748,14 @@ def comparison_tab_layout():
                 # Metrics table
                 html.Div(
                     style={
-                        'background': '#F8F9FA',
-                        'padding': '15px',
-                        'borderRadius': '8px',
+                        'background': 'rgba(255, 255, 255, 0.8)',
+                        'padding': '20px',
+                        'borderRadius': '10px',
+                        'boxShadow': '0 2px 8px rgba(0,0,0,0.05)',
                     },
                     children=[
-                        html.H4("Network Metrics", style={'color': '#2C3E50'}),
+                        html.H4("📊 Network Metrics", 
+                               style={'color': '#2C3E50', 'marginBottom': '15px', 'fontSize': '18px'}),
                         html.Div(id='comparison-metrics'),
                     ]
                 ),
@@ -443,39 +769,78 @@ def normalizing_tab_layout():
     return html.Div([
         html.Div(
             style={
-                'background': 'white',
-                'padding': '25px',
-                'borderRadius': '10px',
-                'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
+                'background': 'rgba(255, 255, 255, 0.95)',
+                'padding': '30px',
+                'borderRadius': '12px',
+                'boxShadow': '0 4px 12px rgba(0,0,0,0.15)',
+                'backdropFilter': 'blur(10px)',
             },
             children=[
-                html.H3("Normalizing Target Discovery", style={'color': '#2C3E50', 'marginBottom': '20px'}),
+                html.Div(
+                    style={
+                        'display': 'flex',
+                        'alignItems': 'center',
+                        'gap': '15px',
+                        'marginBottom': '15px',
+                    },
+                    children=[
+                        html.Div('🎯', style={'fontSize': '32px'}),
+                        html.H3("Normalizing Target Discovery", 
+                               style={
+                                   'color': '#2C3E50',
+                                   'margin': '0',
+                                   'fontSize': '24px',
+                                   'fontWeight': '600',
+                               }),
+                    ]
+                ),
                 html.P(
                     "Find genes in the target network whose removal makes its robustness "
                     "profile resemble the reference network.",
-                    style={'color': '#7F8C8D', 'marginBottom': '20px'}
+                    style={
+                        'color': '#4A5568',
+                        'marginBottom': '20px',
+                        'fontSize': '15px',
+                        'lineHeight': '1.6',
+                    }
                 ),
                 
                 # Network selectors
                 html.Div(
-                    style={'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '20px', 'marginBottom': '20px'},
+                    style={'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '20px', 'marginBottom': '25px'},
                     children=[
                         html.Div([
-                            html.Label("Target Network:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                            html.Label("Target Network:", 
+                                      style={
+                                          'fontWeight': '600',
+                                          'marginBottom': '8px',
+                                          'display': 'block',
+                                          'color': '#4A5568',
+                                          'fontSize': '15px',
+                                      }),
                             dcc.Dropdown(
                                 id='normalizing-target-network',
                                 options=[],
                                 value=None,
-                                style={'width': '100%'}
+                                style={'width': '100%'},
+                                placeholder="Select target network..."
                             ),
                         ]),
                         html.Div([
-                            html.Label("Reference Network:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                            html.Label("Reference Network:", 
+                                      style={
+                                          'fontWeight': '600',
+                                          'marginBottom': '8px',
+                                          'display': 'block',
+                                          'color': '#4A5568',
+                                          'fontSize': '15px',
+                                      }),
                             dcc.Dropdown(
                                 id='normalizing-reference-network',
                                 options=[],
                                 value=None,
-                                style={'width': '100%'}
+                                style={'width': '100%'},
+                                placeholder="Select reference network..."
                             ),
                         ]),
                     ]
@@ -483,21 +848,24 @@ def normalizing_tab_layout():
                 
                 # Run button
                 html.Div(
-                    style={'textAlign': 'center', 'marginBottom': '20px'},
+                    style={'textAlign': 'center', 'marginBottom': '25px'},
                     children=[
                         html.Button(
                             '🔍 FIND NORMALIZING TARGETS',
                             id='find-targets-button',
                             n_clicks=0,
                             style={
-                                'backgroundColor': '#E74C3C',
+                                'backgroundColor': 'linear-gradient(135deg, #E74C3C 0%, #C0392B 100%)',
                                 'color': 'white',
                                 'border': 'none',
-                                'padding': '12px 25px',
-                                'borderRadius': '5px',
+                                'padding': '14px 30px',
+                                'borderRadius': '10px',
                                 'cursor': 'pointer',
-                                'fontSize': '14px',
-                                'fontWeight': 'bold'
+                                'fontSize': '15px',
+                                'fontWeight': '700',
+                                'boxShadow': '0 6px 12px rgba(231, 76, 60, 0.3)',
+                                'transition': 'all 0.3s ease',
+                                'letterSpacing': '1px',
                             }
                         ),
                     ]
@@ -522,24 +890,50 @@ def graphs_tab_layout():
     return html.Div([
         html.Div(
             style={
-                'background': 'white',
-                'padding': '25px',
-                'borderRadius': '10px',
-                'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
+                'background': 'rgba(255, 255, 255, 0.95)',
+                'padding': '30px',
+                'borderRadius': '12px',
+                'boxShadow': '0 4px 12px rgba(0,0,0,0.15)',
+                'backdropFilter': 'blur(10px)',
             },
             children=[
-                html.H3("Network Visualizations", style={'color': '#2C3E50', 'marginBottom': '20px'}),
+                html.Div(
+                    style={
+                        'display': 'flex',
+                        'alignItems': 'center',
+                        'gap': '15px',
+                        'marginBottom': '20px',
+                    },
+                    children=[
+                        html.Div('🌐', style={'fontSize': '32px'}),
+                        html.H3("Network Visualizations", 
+                               style={
+                                   'color': '#2C3E50',
+                                   'margin': '0',
+                                   'fontSize': '24px',
+                                   'fontWeight': '600',
+                               }),
+                    ]
+                ),
                 
                 # Network selector
                 html.Div(
-                    style={'marginBottom': '20px'},
+                    style={'marginBottom': '25px'},
                     children=[
-                        html.Label("Select Network:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                        html.Label("Select Network:", 
+                                  style={
+                                      'fontWeight': '600',
+                                      'marginBottom': '8px',
+                                      'display': 'block',
+                                      'color': '#4A5568',
+                                      'fontSize': '15px',
+                                  }),
                         dcc.Dropdown(
                             id='graph-network-selector',
                             options=[],
                             value=None,
-                            style={'width': '300px'}
+                            style={'width': '300px'},
+                            placeholder="Choose a network..."
                         ),
                     ]
                 ),
@@ -547,17 +941,27 @@ def graphs_tab_layout():
                 # Graph display
                 html.Div(
                     style={
-                        'background': '#F8F9FA',
-                        'padding': '15px',
-                        'borderRadius': '8px',
+                        'background': 'rgba(255, 255, 255, 0.8)',
+                        'padding': '20px',
+                        'borderRadius': '10px',
+                        'boxShadow': '0 2px 8px rgba(0,0,0,0.05)',
                     },
                     children=[
-                        dcc.Graph(id='network-graph-display'),
+                        dcc.Graph(id='network-graph-display', config={'displayModeBar': True}),
                     ]
                 ),
                 
                 # Graph info
-                html.Div(id='graph-info', style={'marginTop': '20px'}),
+                html.Div(id='graph-info', 
+                        style={
+                            'marginTop': '20px',
+                            'padding': '15px',
+                            'background': 'rgba(255, 255, 255, 0.6)',
+                            'borderRadius': '8px',
+                            'textAlign': 'center',
+                            'fontSize': '15px',
+                            'color': '#4A5568',
+                        }),
             ]
         ),
     ])
