@@ -64,11 +64,11 @@ class NormalizingTargetFinder:
         graph = target_network_data.get('graph')
         original_curve = target_network_data.get('targ_curve', ([], []))
         
-        if graph is None:
-            raise ValueError("Target network graph is required")
+        if graph is None or graph.number_of_nodes() == 0:
+            raise ValueError("Target network graph is required and must have nodes")
         
-        if not reference_curve or len(reference_curve[0]) == 0:
-            raise ValueError("Reference curve is required")
+        if not reference_curve or len(reference_curve) == 0 or len(reference_curve[0]) == 0:
+            raise ValueError("Reference curve is required and must have data points")
         
         # Calculate original similarity
         original_similarity = self._calculate_curve_similarity(

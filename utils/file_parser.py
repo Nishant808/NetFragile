@@ -138,7 +138,7 @@ class EdgeRParser:
         # Check minimum genes
         if len(gene_list) < min_genes:
             logger.error(f"Only {len(gene_list)} genes found (minimum {min_genes} required)")
-            raise ValueError(f"Insufficient genes: {len(gene_list)} < {min_genes}")
+            raise ValueError(f"Insufficient genes: found {len(gene_list)}, minimum {min_genes} required. Try disabling filters or uploading a larger file.")
         
         logger.info(f"Parsed {len(gene_list)} genes from {file_path}")
         return gene_list

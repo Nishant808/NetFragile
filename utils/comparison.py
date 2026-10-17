@@ -5,6 +5,7 @@ Handles comparative analysis between multiple networks,
 including similarity metrics and visualization data.
 """
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict, Any, Optional
@@ -198,7 +199,7 @@ class NetworkComparator:
                 if targ_curve and len(targ_curve[0]) > 0:
                     x, y = targ_curve
                     # Area under curve (approximate)
-                    auc = np.trapz(y, x)
+                    auc = np.trapz(y, x) if hasattr(np, 'trapz') else np.sum(np.diff(x) * np.array(y[:-1]))
                     metrics['Targeted AUC'] = auc
                     
                     # Percolation threshold (fraction removed when LCC drops below 50%)
