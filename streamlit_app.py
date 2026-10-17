@@ -172,7 +172,7 @@ class NetworkAnalyzer:
         results['node_count'] = self.graph.number_of_nodes()
         results['edge_count'] = self.graph.number_of_edges()
         results['density'] = nx.density(self.graph)
-        results['average_clustering'] = nx.average_clustering_coefficient(self.graph)
+        results['average_clustering'] = nx.average_clustering(self.graph)
         
         # Top targets
         top_n = min(10, len(self.degree_cent))
@@ -747,7 +747,8 @@ def main():
                     with col1:
                         st.metric("Density", selected_result['summary_stats'].get('Density', 'N/A'))
                     with col2:
-                        st.metric("Avg Clustering", selected_result['summary_stats'].get('Avg Clustering', 'N/A'))
+                        avg_cluster = selected_result['summary_stats'].get('Avg Clustering', 'N/A')
+                        st.metric("Avg Clustering", f"{avg_cluster:.4f}" if isinstance(avg_cluster, (int, float)) else avg_cluster)
                     with col3:
                         st.metric("Is Connected", selected_result['summary_stats'].get('Is Connected', 'N/A'))
                     with col4:
