@@ -1,6 +1,6 @@
 """
-NetFragile Streamlit App - Network Robustness Analyzer
-Ingest CSV with gene sets and perform batch network analysis
+NetFragile 2.0 - Streamlit App for Multi-Network Comparative Analysis
+Upload EdgeR DEG files and find normalizing targets across conditions
 """
 
 import streamlit as st
@@ -9,22 +9,29 @@ import plotly.graph_objects as go
 import requests
 import io
 import pandas as pd
-import random
-from datetime import datetime
-import json
+import numpy as np
+from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 import tempfile
 import os
+import time
+
+# Import utilities
+from utils.file_parser import EdgeRParser, parse_deg_file
+from utils.network_builder import NetworkBuilder, build_network_from_genes
+from utils.robustness import RobustnessAnalyzer
+from utils.comparison import NetworkComparator
+from utils.normalizing import NormalizingTargetFinder
 
 # Page configuration
 st.set_page_config(
-    page_title="NetFragile - Network Analysis",
+    page_title="NetFragile 2.0 - Multi-Network Analysis",
     page_icon="🧬",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS for modern look
 st.markdown("""
     <style>
     .main {
@@ -38,990 +45,845 @@ st.markdown("""
         padding-bottom: 1rem;
     }
     h1 {
-        color: #1f77b4;
+        color: #2C3E50;
         padding-bottom: 0.5rem;
-        border-bottom: 3px solid #1f77b4;
+        border-bottom: 3px solid #667eea;
     }
     h2 {
-        color: #2c3e50;
+        color: #2C3E50;
         margin-top: 1.5rem;
     }
     h3 {
-        color: #34495e;
+        color: #4A5568;
     }
     .metric-card {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #1f77b4;
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+        padding: 1.5rem;
+        border-radius: 12px;
+        border-left: 4px solid #667eea;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        margin: 1rem 0;
     }
     .gene-tag {
         display: inline-block;
-        background-color: #e8f4f8;
-        color: #2c3e50;
-        padding: 0.25rem 0.5rem;
-        border-radius: 0.25rem;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 0.35rem 0.75rem;
+        border-radius: 12px;
         margin: 0.25rem;
         font-size: 0.875rem;
-        border: 1px solid #b8daff;
+        box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
     }
     .pathway-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 1.5rem;
-        border-radius: 0.5rem;
+        border-radius: 12px;
         color: white;
         margin: 1rem 0;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
     }
     .stTabs [data-baseweb="tab-list"] {
         gap: 2rem;
+    }
+    .stTabs [data-baseweb="tab"] {
+        padding: 12px 24px;
+        border-radius: 8px 8px 0 0;
+        font-weight: 600;
+    }
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: white !important;
+    }
+    .stButton>button {
+        border-radius: 8px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        border: none;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    .stButton>button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+    }
+    .upload-box {
+        border: 2px dashed #667eea;
+        border-radius: 12px;
+        padding: 2rem;
+        text-align: center;
+        background: rgba(102, 126, 234, 0.05);
+        margin: 1rem 0;
+    }
+    .result-box {
+        background: rgba(255, 255, 255, 0.8);
+        padding: 1.5rem;
+        border-radius: 12px;
+        border: 1px solid #E2E8F0;
+        margin: 1rem 0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .success-box {
+        background: linear-gradient(135deg, rgba(39, 174, 96, 0.1) 0%, rgba(34, 153, 84, 0.1) 100%);
+        padding: 1.5rem;
+        border-radius: 12px;
+        border-left: 4px solid #27AE60;
+        margin: 1rem 0;
+        box-shadow: 0 4px 12px rgba(39, 174, 96, 0.2);
+    }
+    .warning-box {
+        background: linear-gradient(135deg, rgba(231, 76, 60, 0.1) 0%, rgba(192, 57, 43, 0.1) 100%);
+        padding: 1.5rem;
+        border-radius: 12px;
+        border-left: 4px solid #E74C3C;
+        margin: 1rem 0;
+        box-shadow: 0 4px 12px rgba(231, 76, 60, 0.2);
+    }
+    .network-card {
+        background: rgba(255, 255, 255, 0.9);
+        padding: 1.5rem;
+        border-radius: 12px;
+        border: 1px solid #E2E8F0;
+        margin: 1rem 0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .network-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+    }
+    .target-highlight {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        display: inline-block;
+        margin: 0.25rem;
+        box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
     }
     </style>
 """, unsafe_allow_html=True)
 
 
-class NetworkAnalyzer:
-    """Core network analysis functionality"""
-    
-    def __init__(self):
+class NetworkData:
+    """Container for network data"""
+    def __init__(self, factor_name: str):
+        self.factor_name = factor_name
+        self.gene_list = []
         self.graph = None
         self.degree_cent = None
         self.betweenness_cent = None
-        self.closeness_cent = None
-        self.rand_res = None
-        self.targ_res = None
-        self.nodes = None
-        self.edges = None
-    
-    def fetch_string_data(self, species_id, seed_genes, required_score=700, add_nodes=200):
-        """
-        Fetches PPI data from STRING Database API.
-        """
-        if not seed_genes or len(seed_genes) == 0:
-            return False, "No seed genes provided"
+        self.rand_curve = None
+        self.targ_curve = None
+        self.metrics = {}
+        self.metadata = {}
+
+
+class AppState:
+    """Global state for the Streamlit app"""
+    def __init__(self):
+        self.networks = {}
+        self.uploaded_files = {}
+        self.analysis_complete = False
+
+
+# Initialize state
+if 'state' not in st.session_state:
+    st.session_state.state = AppState()
+
+
+def parse_edgeR_file(uploaded_file, factor_name: str = None) -> Optional[Dict[str, Any]]:
+    """Parse uploaded EdgeR DEG file"""
+    try:
+        # Read CSV
+        df = pd.read_csv(uploaded_file)
         
-        # STRING API Endpoint
-        url = "https://string-db.org/api/tsv/network"
+        # Auto-detect gene column
+        parser = EdgeRParser()
+        gene_col = parser._find_gene_column(df)
         
-        params = {
-            "identifiers": "%0d".join(seed_genes),
-            "species": species_id,
-            "add_nodes": add_nodes,
-            "required_score": required_score,
-            "network_type": "functional"
-        }
+        if gene_col is None:
+            gene_col = df.columns[0]
         
-        try:
-            response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            
-            if response.text.strip() == "":
-                return False, f"No data found for species {species_id} with genes: {', '.join(seed_genes[:5])}..."
-            
-            # Parse TSV data
-            data = response.text
-            df = pd.read_csv(io.StringIO(data), sep="\t")
-            
-            if df.empty:
-                return False, "Empty response from STRING API"
-            
-            # Build graph from edge list
-            self.graph = nx.Graph()
-            for _, row in df.iterrows():
-                p1 = row['preferredName_A']
-                p2 = row['preferredName_B']
-                score = row['score']
-                self.graph.add_edge(p1, p2, weight=score)
-            
-            # Keep only the largest connected component
-            if self.graph.number_of_nodes() > 0:
-                largest_cc = max(nx.connected_components(self.graph), key=len)
-                self.graph = self.graph.subgraph(largest_cc).copy()
-            
-            self.nodes = list(self.graph.nodes())
-            self.edges = list(self.graph.edges())
-            
-            return True, f"Success: {self.graph.number_of_nodes()} nodes, {self.graph.number_of_edges()} edges"
-            
-        except requests.exceptions.Timeout:
-            return False, "STRING API request timed out. Please try again."
-        except requests.exceptions.RequestException as e:
-            return False, f"STRING API error: {str(e)}"
-        except Exception as e:
-            return False, f"Error processing data: {str(e)}"
-    
-    def analyze_centrality(self):
-        """Calculate centrality metrics"""
-        if self.graph is None or self.graph.number_of_nodes() == 0:
-            return {}
+        # Extract genes
+        gene_list = df[gene_col].astype(str).tolist()
+        gene_list = [g for g in gene_list if g and g != 'nan' and g != 'NaN']
         
-        results = {}
-        
-        # Degree Centrality (Hubs)
-        self.degree_cent = nx.degree_centrality(self.graph)
-        results['degree_centrality'] = dict(sorted(self.degree_cent.items(), key=lambda x: x[1], reverse=True))
-        
-        # Betweenness Centrality (Bottlenecks)
-        self.betweenness_cent = nx.betweenness_centrality(self.graph)
-        results['betweenness_centrality'] = dict(sorted(self.betweenness_cent.items(), key=lambda x: x[1], reverse=True))
-        
-        # Closeness Centrality
-        self.closeness_cent = nx.closeness_centrality(self.graph)
-        results['closeness_centrality'] = dict(sorted(self.closeness_cent.items(), key=lambda x: x[1], reverse=True))
-        
-        # Additional metrics
-        results['node_count'] = self.graph.number_of_nodes()
-        results['edge_count'] = self.graph.number_of_edges()
-        results['density'] = nx.density(self.graph)
-        results['average_clustering'] = nx.average_clustering(self.graph)
-        
-        # Top targets
-        top_n = min(10, len(self.degree_cent))
-        results['top_hubs'] = [n for n, v in sorted(self.degree_cent.items(), key=lambda x: x[1], reverse=True)[:top_n]]
-        results['top_bottlenecks'] = [n for n, v in sorted(self.betweenness_cent.items(), key=lambda x: x[1], reverse=True)[:top_n]]
-        
-        return results
-    
-    def simulate_removal(self, node_order):
-        """Simulates sequential removal of nodes and tracks LCC size."""
-        if self.graph is None:
-            return [], []
-        
-        G_temp = self.graph.copy()
-        lcc_sizes = []
-        n_removed = []
-        initial_size = len(G_temp)
-        
-        for i, node in enumerate(node_order):
-            if node in G_temp:
-                G_temp.remove_node(node)
-            
-            if len(G_temp) > 0:
-                largest_cc = len(max(nx.connected_components(G_temp), key=len))
-                lcc_sizes.append(largest_cc / initial_size)
-            else:
-                lcc_sizes.append(0)
-            
-            n_removed.append((i + 1) / initial_size)
-            
-            # Stop if network is effectively destroyed
-            if lcc_sizes[-1] < 0.05:
-                break
-        
-        return n_removed, lcc_sizes
-    
-    def robustness_test(self):
-        """Compare Random vs. Targeted attack"""
-        if self.graph is None or self.graph.number_of_nodes() == 0:
-            return None, None, {}
-        
-        nodes = list(self.graph.nodes())
-        
-        # Random Attack
-        random_order = nodes.copy()
-        random.shuffle(random_order)
-        rand_x, rand_y = self.simulate_removal(random_order)
-        self.rand_res = (rand_x, rand_y)
-        
-        # Targeted Attack (Degree Centrality)
-        degree_dict = dict(self.graph.degree())
-        targeted_order = sorted(degree_dict, key=degree_dict.get, reverse=True)
-        targ_x, targ_y = self.simulate_removal(targeted_order)
-        self.targ_res = (targ_x, targ_y)
-        
-        return rand_x, rand_y, targ_x, targ_y
-    
-    def get_robustness_figure(self, pathway_name=""):
-        """Generate robustness plot"""
-        if self.rand_res is None or self.targ_res is None:
-            return None
-        
-        rand_x, rand_y = self.rand_res
-        targ_x, targ_y = self.targ_res
-        
-        fig = go.Figure()
-        
-        fig.add_trace(go.Scatter(
-            x=rand_x, y=rand_y,
-            mode='lines+markers',
-            name='Random Removal',
-            line=dict(color='green', width=3),
-            marker=dict(size=6),
-            hovertemplate='Fraction Removed: %{x:.2%}<br>Integrity: %{y:.2%}<extra></extra>'
-        ))
-        
-        fig.add_trace(go.Scatter(
-            x=targ_x, y=targ_y,
-            mode='lines+markers',
-            name='Targeted (Hubs)',
-            line=dict(color='red', width=3, dash='dash'),
-            marker=dict(size=6),
-            hovertemplate='Fraction Removed: %{x:.2%}<br>Integrity: %{y:.2%}<extra></extra>'
-        ))
-        
-        title = f'Network Robustness' + (f' - {pathway_name}' if pathway_name else '')
-        
-        fig.update_layout(
-            title={
-                'text': title,
-                'y': 0.95,
-                'x': 0.5,
-                'xanchor': 'center',
-                'yanchor': 'top',
-                'font': dict(size=18)
-            },
-            xaxis_title='Fraction of Nodes Removed',
-            yaxis_title='Network Integrity (LCC Size)',
-            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01, bgcolor='rgba(255,255,255,0.8)'),
-            plot_bgcolor='white',
-            font=dict(size=14),
-            hovermode='closest',
-            height=500,
-            margin=dict(t=80)
-        )
-        
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey')
-        
-        return fig
-    
-    def get_network_figure(self, pathway_name=""):
-        """Generate interactive network visualization"""
-        if self.graph is None or self.graph.number_of_nodes() == 0:
-            return None
-        
-        # Compute positions
-        pos = nx.spring_layout(self.graph, seed=42, k=0.15, iterations=50)
-        
-        # Edges
-        edge_x = []
-        edge_y = []
-        edge_hover = []
-        for edge in self.graph.edges():
-            x0, y0 = pos[edge[0]]
-            x1, y1 = pos[edge[1]]
-            edge_x.extend([x0, x1, None])
-            edge_y.extend([y0, y1, None])
-            weight = self.graph.edges[edge].get('weight', 1)
-            edge_hover.extend([f'Edge: {edge[0]}-{edge[1]}<br>Weight: {weight:.0f}'] * 3)
-        
-        edge_trace = go.Scatter(
-            x=edge_x, y=edge_y,
-            line=dict(width=0.5, color='grey'),
-            hoverinfo='text',
-            text=edge_hover,
-            mode='lines',
-            showlegend=False,
-            opacity=0.5
-        )
-        
-        # Nodes
-        node_x = []
-        node_y = []
-        node_text = []
-        node_degree = dict(self.graph.degree())
-        max_degree = max(node_degree.values()) if node_degree else 1
-        node_size = [10 + 15 * (node_degree[node] / max_degree) for node in self.graph.nodes()]
-        node_color = [node_degree[node] for node in self.graph.nodes()]
-        
-        for node in self.graph.nodes():
-            x, y = pos[node]
-            node_x.append(x)
-            node_y.append(y)
-            deg = node_degree[node]
-            node_text.append(f'<b>{node}</b><br>Degree: {deg}')
-        
-        # Highlight top hubs
-        top_hubs = sorted(node_degree.items(), key=lambda x: x[1], reverse=True)[:5]
-        top_hub_names = [n for n, d in top_hubs]
-        node_colors = ['#ff7f0e' if node in top_hub_names else node_color[i] for i, node in enumerate(self.graph.nodes())]
-        
-        node_trace = go.Scatter(
-            x=node_x, y=node_y,
-            mode='markers',
-            hoverinfo='text',
-            text=node_text,
-            marker=dict(
-                showscale=True,
-                colorscale='YlOrRd',
-                reversescale=False,
-                color=node_colors,
-                size=node_size,
-                colorbar=dict(
-                    thickness=15,
-                    title=dict(text='Node Degree', side='right'),
-                ),
-                line_width=1,
-                line_color='DarkSlateGrey'
-            ),
-            name='Nodes',
-            opacity=0.8
-        )
-        
-        fig = go.Figure(data=[edge_trace, node_trace])
-        
-        title = f'Network Visualization' + (f' - {pathway_name}' if pathway_name else '')
-        
-        fig.update_layout(
-            title={
-                'text': title,
-                'y': 0.95,
-                'x': 0.5,
-                'xanchor': 'center',
-                'yanchor': 'top',
-                'font': dict(size=18)
-            },
-            showlegend=False,
-            hovermode='closest',
-            margin=dict(b=20, l=5, r=5, t=80),
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            plot_bgcolor='white',
-            height=600
-        )
-        
-        return fig
-    
-    def get_summary_stats(self):
-        """Get summary statistics"""
-        if self.graph is None:
-            return {}
+        # Remove duplicates
+        gene_list = list(dict.fromkeys(gene_list))
         
         return {
-            'Nodes': self.graph.number_of_nodes(),
-            'Edges': self.graph.number_of_edges(),
-            'Density': f"{nx.density(self.graph):.4f}",
-            'Avg Clustering': f"{nx.average_clustering(self.graph):.4f}",
-            'Is Connected': nx.is_connected(self.graph),
-            'Components': nx.number_connected_components(self.graph),
-            'Diameter': nx.diameter(self.graph) if nx.is_connected(self.graph) else 'N/A',
-            'Avg Path Length': f"{nx.average_shortest_path_length(self.graph):.4f}" if nx.is_connected(self.graph) else 'N/A'
+            'factor_name': factor_name or uploaded_file.name.replace('.csv', '').replace('.tsv', ''),
+            'gene_list': gene_list,
+            'gene_count': len(gene_list),
+            'columns': list(df.columns),
+            'file_name': uploaded_file.name
         }
+    except Exception as e:
+        st.error(f"Error parsing {uploaded_file.name}: {str(e)}")
+        return None
 
 
-def parse_csv_genes(csv_file, gene_column='leadingEdge'):
-    """Parse CSV file and extract gene sets from specified column"""
+def build_network_from_genes(gene_list: List[str], factor_name: str, 
+                              required_score: int = 700, add_nodes: int = 200) -> Optional[NetworkData]:
+    """Build network from gene list"""
     try:
-        df = pd.read_csv(csv_file)
+        builder = NetworkBuilder()
+        graph, metadata = builder.build_network(
+            gene_list,
+            required_score=required_score,
+            add_nodes=add_nodes
+        )
         
-        if gene_column not in df.columns:
-            st.error(f"Column '{gene_column}' not found in CSV. Available columns: {list(df.columns)}")
+        if graph.number_of_nodes() == 0:
+            st.warning(f"No network could be built for {factor_name}. Try lowering the confidence score.")
             return None
         
-        # Extract pathways and their genes
-        results = []
-        for idx, row in df.iterrows():
-            pathway = row.get('pathway', f'Pathway_{idx}')
-            genes_str = str(row[gene_column])
-            
-            # Parse genes (semicolon-separated)
-            genes = [g.strip() for g in genes_str.split(';') if g.strip()]
-            
-            if genes:
-                results.append({
-                    'pathway': pathway,
-                    'genes': genes,
-                    'gene_count': len(genes),
-                    'pval': row.get('pval', 'N/A'),
-                    'padj': row.get('padj', 'N/A'),
-                    'NES': row.get('NES', 'N/A'),
-                    'size': row.get('size', len(genes))
-                })
+        # Create NetworkData
+        nd = NetworkData(factor_name)
+        nd.gene_list = gene_list
+        nd.graph = graph
+        nd.metadata = metadata
         
-        return pd.DataFrame(results)
+        # Run robustness analysis
+        analyzer = RobustnessAnalyzer()
+        curves = analyzer.analyze_network(graph, ['random', 'degree'])
+        nd.rand_curve = curves['random']
+        nd.targ_curve = curves['degree']
+        
+        # Calculate metrics
+        nd.metrics = {
+            'nodes': graph.number_of_nodes(),
+            'edges': graph.number_of_edges(),
+            'density': nx.density(graph) if graph.number_of_nodes() > 1 else 0,
+            'avg_degree': sum(dict(graph.degree()).values()) / graph.number_of_nodes() if graph.number_of_nodes() > 0 else 0,
+        }
+        
+        # Calculate centrality
+        if graph.number_of_nodes() > 0:
+            nd.degree_cent = nx.degree_centrality(graph)
+            nd.betweenness_cent = nx.betweenness_centrality(graph)
+        
+        return nd
         
     except Exception as e:
-        st.error(f"Error parsing CSV: {str(e)}")
+        st.error(f"Error building network for {factor_name}: {str(e)}")
         return None
+
+
+def create_robustness_figure(networks_data: Dict[str, NetworkData]) -> go.Figure:
+    """Create overlay robustness figure"""
+    fig = go.Figure()
+    
+    colors = ['#667eea', '#764ba2', '#f093fb', '#4facfe', '#43e97b', '#fa709a']
+    
+    for i, (name, nd) in enumerate(networks_data.items()):
+        if nd.targ_curve:
+            x, y = nd.targ_curve
+            fig.add_trace(go.Scatter(
+                x=x, y=y,
+                mode='lines+markers',
+                name=name,
+                line=dict(color=colors[i % len(colors)], width=3),
+                marker=dict(size=6),
+                hovertemplate=f'{name}<br>Fraction Removed: %{{x:.2%}}<br>Integrity: %{{y:.2%}}<extra></extra>'
+            ))
+    
+    fig.update_layout(
+        title={
+            'text': 'Comparative Robustness: Targeted Removal',
+            'y': 0.95,
+            'x': 0.5,
+            'xanchor': 'center',
+            'yanchor': 'top',
+            'font': dict(size=20, color='#2C3E50')
+        },
+        xaxis_title='Fraction of Network Removed',
+        yaxis_title='Network Integrity (LCC Size)',
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        plot_bgcolor='rgba(255,255,255,0.9)',
+        paper_bgcolor='rgba(255,255,255,0.9)',
+        font=dict(size=14, family='Arial'),
+        hovermode='closest',
+        height=600,
+        margin=dict(t=80)
+    )
+    
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGrey')
+    
+    return fig
+
+
+def create_network_figure(nd: NetworkData) -> go.Figure:
+    """Create network visualization"""
+    if nd.graph is None or nd.graph.number_of_nodes() == 0:
+        return go.Figure()
+    
+    try:
+        pos = nx.spring_layout(nd.graph, seed=42, k=0.15, iterations=50)
+    except:
+        pos = nx.random_layout(nd.graph)
+    
+    # Edges
+    edge_x, edge_y = [], []
+    for edge in nd.graph.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+    
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y,
+        line=dict(width=0.5, color='rgba(102, 126, 234, 0.3)'),
+        hoverinfo='none',
+        mode='lines'
+    )
+    
+    # Nodes
+    node_x, node_y, node_text = [], [], []
+    node_degree = dict(nd.graph.degree())
+    max_degree = max(node_degree.values()) if node_degree else 1
+    node_size = [10 + 12 * (node_degree[node] / max_degree) for node in nd.graph.nodes()]
+    node_color = [node_degree[node] for node in nd.graph.nodes()]
+    
+    for node in nd.graph.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        deg = node_degree[node]
+        node_text.append(f'<b>{node}</b><br>Degree: {deg}')
+    
+    node_trace = go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers',
+        hoverinfo='text',
+        text=node_text,
+        marker=dict(
+            showscale=True,
+            colorscale='YlOrRd',
+            color=node_color,
+            size=node_size,
+            colorbar=dict(thickness=15, title='Node Degree'),
+            line_width=1,
+            line_color='DarkSlateGrey'
+        )
+    )
+    
+    fig = go.Figure(data=[edge_trace, node_trace])
+    
+    fig.update_layout(
+        title=f'Network: {nd.factor_name}',
+        showlegend=False,
+        hovermode='closest',
+        margin=dict(b=20, l=5, r=5, t=40),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        plot_bgcolor='rgba(255,255,255,0.9)',
+        paper_bgcolor='rgba(255,255,255,0.9)',
+        height=700
+    )
+    
+    return fig
+
+
+def create_normalizing_figure(target_nd: NetworkData, reference_nd: NetworkData, 
+                              target_info: pd.Series) -> go.Figure:
+    """Create before/after figure for normalizing target"""
+    fig = go.Figure()
+    
+    # Original target
+    if target_nd.targ_curve:
+        x, y = target_nd.targ_curve
+        fig.add_trace(go.Scatter(
+            x=x, y=y,
+            mode='lines+markers',
+            name=f'{target_nd.factor_name} (Original)',
+            line=dict(color='#E74C3C', width=3, dash='dash'),
+            marker=dict(size=6)
+        ))
+    
+    # Modified target
+    if 'curve_x' in target_info and 'curve_y' in target_info:
+        fig.add_trace(go.Scatter(
+            x=target_info['curve_x'],
+            y=target_info['curve_y'],
+            mode='lines+markers',
+            name=f'{target_nd.factor_name} - {target_info["gene"]}',
+            line=dict(color='#F39C12', width=3),
+            marker=dict(size=6)
+        ))
+    
+    # Reference
+    if reference_nd.targ_curve:
+        x, y = reference_nd.targ_curve
+        fig.add_trace(go.Scatter(
+            x=x, y=y,
+            mode='lines+markers',
+            name=f'{reference_nd.factor_name} (Reference)',
+            line=dict(color='#27AE60', width=3),
+            marker=dict(size=6)
+        ))
+    
+    fig.update_layout(
+        title=f'Normalizing Effect: Removing {target_info["gene"]}',
+        xaxis_title='Fraction of Network Removed',
+        yaxis_title='Network Integrity (LCC Size)',
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        plot_bgcolor='rgba(255,255,255,0.9)',
+        paper_bgcolor='rgba(255,255,255,0.9)',
+        height=500,
+        hovermode='closest'
+    )
+    
+    return fig
 
 
 def main():
     """Main Streamlit app"""
     
-    # Title
-    st.title("🧬 NetFragile - Network Robustness Analyzer")
+    # Title with emoji
     st.markdown("""
-        **Upload a CSV with gene sets and analyze their network robustness**
-        
-        This tool processes pathway/gene set data from GSEA or similar analyses,
-        builds protein-protein interaction networks using STRING database,
-        and evaluates network robustness through targeted and random attacks.
-    """)
+        <div style='text-align: center; padding: 2rem 0;'>
+            <h1 style='color: #2C3E50; font-size: 48px; font-weight: 700;'>
+                🧬 NetFragile 2.0
+            </h1>
+            <h3 style='color: #4A5568; font-size: 24px; font-weight: 500; margin-top: 10px;'>
+                Multi-Network Comparative Analysis
+            </h3>
+            <p style='color: #718096; font-size: 16px; margin-top: 10px;'>
+                Upload EdgeR DEG files → Build Networks → Find Normalizing Targets
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
     
     # Sidebar
     with st.sidebar:
-        st.header("⚙️ Settings")
+        st.markdown("## ⚙️ Settings")
         
-        # Species selection
+        # Species (locked to human)
+        st.markdown("### Species")
         species_id = st.selectbox(
-            "Species (TaxID)",
-            [83332, 9606, 10090, 10116],
-            index=1,
-            help="""
-            Select species TaxID:
-            - 9606: Homo sapiens (Human)
-            - 10090: Mus musculus (Mouse)
-            - 10116: Rattus norvegicus (Rat)
-            - 83332: Mycobacterium tuberculosis
-            """
+            "Species",
+            options=[("Human (Homo sapiens)", 9606)],
+            index=0,
+            disabled=True,
+            help="Currently only human (TaxID: 9606) is supported"
         )
+        species_id = 9606  # Extract the ID
         
-        species_names = {
-            83332: "Mycobacterium tuberculosis",
-            9606: "Homo sapiens (Human)",
-            10090: "Mus musculus (Mouse)",
-            10116: "Rattus norvegicus (Rat)"
-        }
-        
-        if species_id in species_names:
-            st.write(f"**Selected:** {species_names[species_id]}")
-        
-        st.divider()
-        
-        # STRING API settings
-        st.subheader("STRING API Settings")
+        # STRING settings
+        st.markdown("### STRING API Settings")
         required_score = st.slider(
-            "Minimum Interaction Score",
-            0, 900, 700, 50,
-            help="Higher scores = higher confidence interactions"
+            "Confidence Score",
+            min_value=100,
+            max_value=900,
+            value=700,
+            step=100,
+            help="Minimum STRING confidence score (higher = fewer, more reliable interactions)"
         )
-        
         add_nodes = st.slider(
             "Additional Nodes",
-            0, 500, 200, 50,
-            help="Number of additional nodes to include in network expansion"
+            min_value=0,
+            max_value=500,
+            value=200,
+            step=50,
+            help="Number of additional nodes to include from STRING database"
         )
         
-        st.divider()
-        
-        # Analysis settings
-        st.subheader("Analysis Settings")
-        max_pathways = st.number_input(
-            "Max Pathways to Process",
-            min_value=1, max_value=50, value=10,
-            help="Limit number of pathways for batch processing"
+        # Filter settings
+        st.markdown("### DEG Filtering")
+        apply_pvalue = st.checkbox("Filter by p-value", value=True)
+        pvalue_threshold = st.number_input(
+            "p-value threshold",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.05,
+            step=0.01,
+            disabled=not apply_pvalue
         )
-        
-        st.divider()
+        apply_logfc = st.checkbox("Filter by |logFC|", value=True)
+        logfc_threshold = st.number_input(
+            "|logFC| threshold",
+            min_value=0.0,
+            max_value=10.0,
+            value=1.0,
+            step=0.5,
+            disabled=not apply_logfc
+        )
         
         # Info
+        st.markdown("---")
         st.markdown("""
-        ### 📖 About
-        
-        **NetFragile** analyzes network robustness by:
-        
-        1. ✅ Building PPI networks from STRING database
-        2. ✅ Identifying hubs and bottlenecks
-        3. ✅ Simulating random vs. targeted attacks
-        4. ✅ Visualizing network integrity curves
-        
-        **Citation:** Inspired by network robustness studies in systems biology
-        
-        ---
-        
-        **Version:** 2.0 (Streamlit Edition)
-        """)
+            <div style='text-align: center; padding: 1rem;'>
+                <p style='color: #718096; font-size: 12px; margin: 0;'>
+                    NetFragile 2.0
+                </p>
+                <p style='color: #A0AEC0; font-size: 10px; margin: 5px 0 0 0;'>
+                    Built with Streamlit
+                </p>
+            </div>
+        """, unsafe_allow_html=True)
     
-    # Main content
-    tab1, tab2, tab3, tab4 = st.tabs(["📁 Upload & Analyze", "📊 Results", "💾 Export", "ℹ️ Help"])
+    # Main tabs
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📤 Upload", 
+        "🔍 Individual Networks", 
+        "📊 Comparison", 
+        "🎯 Normalizing Targets",
+        "🌐 Network Graphs"
+    ])
     
-    # Initialize session state
-    if 'analyzer' not in st.session_state:
-        st.session_state.analyzer = NetworkAnalyzer()
-    if 'pathway_results' not in st.session_state:
-        st.session_state.pathway_results = []
-    if 'current_pathway' not in st.session_state:
-        st.session_state.current_pathway = None
-    if 'analysis_complete' not in st.session_state:
-        st.session_state.analysis_complete = False
-    if 'uploaded_file' not in st.session_state:
-        st.session_state.uploaded_file = None
-    
+    # TAB 1: Upload Files
     with tab1:
-        st.header("Upload CSV and Analyze")
+        st.markdown("## 📤 Upload EdgeR DEG Files")
+        st.markdown("""
+            Upload your EdgeR differential expression output CSV/TSV files.
+            Each file represents a condition (e.g., Metastatic, Normal, Tumor).
+            The tool will automatically parse gene lists and build networks.
+        """)
         
-        # File upload
-        uploaded_file = st.file_uploader(
-            "Upload CSV File",
-            type=['csv'],
-            help="Upload a CSV file containing pathway/gene set data (e.g., GSEA results)",
-            key='csv_uploader'
+        # File uploader
+        uploaded_files = st.file_uploader(
+            "Upload DEG Files",
+            type=['csv', 'tsv', 'txt'],
+            accept_multiple_files=True,
+            help="Upload one or more EdgeR output files"
         )
         
-        if uploaded_file:
-            st.session_state.uploaded_file = uploaded_file
+        if uploaded_files:
+            st.success(f"✅ {len(uploaded_files)} file(s) uploaded")
             
-            # Parse CSV
-            with st.spinner("Parsing CSV file..."):
-                pathway_df = parse_csv_genes(uploaded_file)
-            
-            if pathway_df is not None and len(pathway_df) > 0:
-                st.success(f"✅ CSV parsed successfully! Found {len(pathway_df)} pathways")
-                
-                # Show preview
-                with st.expander("📋 Preview Pathway Data"):
-                    st.dataframe(pathway_df.head(), use_container_width=True)
-                    st.write(f"Total pathways: {len(pathway_df)}")
-                
-                # Select pathways to analyze
-                st.subheader("Select Pathways to Analyze")
-                
-                selected_pathways = st.multiselect(
-                    "Choose pathways (or leave empty to analyze top pathways)",
-                    pathway_df['pathway'].tolist(),
-                    default=pathway_df['pathway'].head(min(5, len(pathway_df))).tolist(),
-                    help="Select specific pathways to analyze, or leave empty to analyze the top pathways"
+            # Parse files
+            parsed_data = []
+            for uploaded_file in uploaded_files:
+                factor_name = st.text_input(
+                    f"Factor name for {uploaded_file.name}",
+                    value=uploaded_file.name.replace('.csv', '').replace('.tsv', '').replace('.txt', ''),
+                    key=f"factor_{uploaded_file.name}"
                 )
                 
-                # If no selection, use top N
-                if not selected_pathways:
-                    selected_pathways = pathway_df['pathway'].head(min(max_pathways, len(pathway_df))).tolist()
-                    st.info(f"Analyzing top {len(selected_pathways)} pathways")
-                else:
-                    # Limit to max_pathways
-                    selected_pathways = selected_pathways[:max_pathways]
-                    st.info(f"Analyzing {len(selected_pathways)} selected pathways (limited to {max_pathways})")
+                parsed = parse_edgeR_file(uploaded_file, factor_name)
+                if parsed:
+                    parsed_data.append(parsed)
+            
+            if parsed_data:
+                st.markdown("### 📋 Parsed Files Summary")
+                for data in parsed_data:
+                    st.markdown(f"""
+                        <div class='network-card'>
+                            <h4 style='color: #667eea; margin-top: 0;'>✅ {data['factor_name']}</h4>
+                            <p style='color: #4A5568; margin: 5px 0;'>
+                                <strong>File:</strong> {data['file_name']}<br>
+                                <strong>Genes:</strong> {data['gene_count']} unique genes
+                            </p>
+                        </div>
+                    """, unsafe_allow_html=True)
                 
-                # Filter dataframe
-                analysis_df = pathway_df[pathway_df['pathway'].isin(selected_pathways)]
-                
-                # Start analysis button
-                if st.button("🚀 Start Network Analysis", type="primary", use_container_width=True):
-                    st.session_state.analysis_complete = False
-                    st.session_state.pathway_results = []
-                    st.session_state.current_pathway = None
-                    
-                    # Initialize progress bar
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    total = len(analysis_df)
-                    
-                    for i, (idx, row) in enumerate(analysis_df.iterrows()):
-                        pathway_name = row['pathway']
-                        genes = row['genes']
+                # Build networks button
+                if st.button("🚀 Build Networks & Run Analysis", 
+                             type="primary",
+                             use_container_width=True):
+                    with st.spinner("Building networks... This may take a few minutes..."):
+                        st.session_state.state.networks = {}
+                        st.session_state.state.uploaded_files = {}
                         
-                        # Update progress
-                        progress = (i + 1) / total
-                        progress_bar.progress(progress)
-                        status_text.text(f"Processing {pathway_name} ({i+1}/{total})...")
+                        progress_bar = st.progress(0)
                         
-                        try:
-                            # Analyze this pathway
-                            analyzer = NetworkAnalyzer()
+                        for i, data in enumerate(parsed_data):
+                            progress = (i + 1) / len(parsed_data)
+                            progress_bar.progress(progress)
                             
-                            success, message = analyzer.fetch_string_data(
-                                species_id, 
-                                genes, 
+                            # Apply filters
+                            gene_list = data['gene_list']
+                            if apply_pvalue or apply_logfc:
+                                # Re-parse with filters
+                                try:
+                                    temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+                                    df = pd.read_csv(uploaded_files[i])
+                                    gene_col = parsed_data[i]['columns'][0]
+                                    
+                                    if apply_pvalue:
+                                        pval_col = next((c for c in df.columns if 'pvalue' in c.lower() or 'p.val' in c.lower()), None)
+                                        if pval_col:
+                                            df = df[df[pval_col] < pvalue_threshold]
+                                    
+                                    if apply_logfc:
+                                        logfc_col = next((c for c in df.columns if 'logfc' in c.lower() or 'logFC' in c.lower()), None)
+                                        if logfc_col:
+                                            df = df[abs(df[logfc_col]) > logfc_threshold]
+                                    
+                                    gene_list = df[gene_col].astype(str).tolist()
+                                    gene_list = [g for g in gene_list if g and g != 'nan']
+                                    gene_list = list(dict.fromkeys(gene_list))
+                                except:
+                                    pass
+                            
+                            # Build network
+                            nd = build_network_from_genes(
+                                gene_list,
+                                data['factor_name'],
                                 required_score=required_score,
                                 add_nodes=add_nodes
                             )
                             
-                            if success:
-                                # Calculate centrality
-                                centrality_results = analyzer.analyze_centrality()
-                                
-                                # Run robustness test
-                                rand_x, rand_y, targ_x, targ_y = analyzer.robustness_test()
-                                
-                                # Get figures
-                                robustness_fig = analyzer.get_robustness_figure(pathway_name)
-                                network_fig = analyzer.get_network_figure(pathway_name)
-                                
-                                # Get summary stats
-                                summary_stats = analyzer.get_summary_stats()
-                                
-                                # Store results
-                                result = {
-                                    'pathway': pathway_name,
-                                    'genes': genes,
-                                    'gene_count': len(genes),
-                                    'network_nodes': summary_stats.get('Nodes', 0),
-                                    'network_edges': summary_stats.get('Edges', 0),
-                                    'message': message,
-                                    'centrality': centrality_results,
-                                    'robustness_fig': robustness_fig,
-                                    'network_fig': network_fig,
-                                    'summary_stats': summary_stats,
-                                    'analyzer': analyzer,
-                                    'pval': row.get('pval', 'N/A'),
-                                    'padj': row.get('padj', 'N/A'),
-                                    'NES': row.get('NES', 'N/A')
-                                }
-                                
-                                st.session_state.pathway_results.append(result)
-                            else:
-                                st.warning(f"⚠️ {pathway_name}: {message}")
-                                
-                        except Exception as e:
-                            st.error(f"❌ Error processing {pathway_name}: {str(e)}")
-                    
-                    st.session_state.analysis_complete = True
-                    status_text.text(f"✅ Analysis complete! Processed {len(st.session_state.pathway_results)} pathways")
-                    progress_bar.empty()
-                    
-                    # Show summary
-                    st.balloons()
-                    st.success(f"Analysis complete! Successfully processed {len(st.session_state.pathway_results)} pathways")
-                    
-                    # Quick summary
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        total_nodes = sum(r['network_nodes'] for r in st.session_state.pathway_results)
-                        st.metric("Total Nodes", f"{total_nodes:,}")
-                    with col2:
-                        total_edges = sum(r['network_edges'] for r in st.session_state.pathway_results)
-                        st.metric("Total Edges", f"{total_edges:,}")
-                    with col3:
-                        avg_nodes = total_nodes / len(st.session_state.pathway_results) if st.session_state.pathway_results else 0
-                        st.metric("Avg Nodes/Pathway", f"{avg_nodes:.1f}")
+                            if nd:
+                                st.session_state.state.networks[data['factor_name']] = nd
+                                st.session_state.state.uploaded_files[data['factor_name']] = data
+                        
+                        st.session_state.state.analysis_complete = True
+                        st.success("✅ Analysis complete! Networks built successfully.")
+                        st.rerun()
+        else:
+            st.info("👆 Upload your EdgeR DEG files to begin")
     
+    # TAB 2: Individual Networks
     with tab2:
-        st.header("📊 Analysis Results")
+        st.markdown("## 🔍 Individual Network Analysis")
         
-        if not st.session_state.analysis_complete:
-            st.info("⬆️ Please upload a CSV and start analysis in the first tab")
+        if not st.session_state.state.analysis_complete or not st.session_state.state.networks:
+            st.info("Please upload and analyze files first in the Upload tab.")
         else:
-            if not st.session_state.pathway_results:
-                st.warning("No results to display. Please run analysis first.")
-            else:
-                # Sort by network size
-                sorted_results = sorted(
-                    st.session_state.pathway_results,
-                    key=lambda x: x['network_nodes'],
-                    reverse=True
-                )
-                
-                # Summary table
-                st.subheader("📈 Summary Table")
-                
-                summary_data = []
-                for r in sorted_results:
-                    summary_data.append({
-                        'Pathway': r['pathway'],
-                        'Genes': r['gene_count'],
-                        'Nodes': r['network_nodes'],
-                        'Edges': r['network_edges'],
-                        'Density': r['summary_stats'].get('Density', 'N/A'),
-                        'Top Hub': r['centrality'].get('top_hubs', [])[0] if r['centrality'].get('top_hubs') else 'N/A',
-                        'p-value': r.get('pval', 'N/A'),
-                        'NES': r.get('NES', 'N/A')
-                    })
-                
-                summary_df = pd.DataFrame(summary_data)
-                st.dataframe(summary_df, use_container_width=True, hide_index=True)
-                
-                st.divider()
-                
-                # Individual pathway analysis
-                st.subheader("🔍 Detailed Pathway Analysis")
-                
-                # Pathway selector
-                pathway_options = [r['pathway'] for r in sorted_results]
-                selected_pathway = st.selectbox(
-                    "Select a pathway to view details",
-                    pathway_options,
-                    key='pathway_selector'
-                )
-                
-                # Find selected pathway
-                selected_result = next(
-                    (r for r in sorted_results if r['pathway'] == selected_pathway),
-                    None
-                )
-                
-                if selected_result:
-                    st.session_state.current_pathway = selected_result
-                    
-                    # Display pathway info
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Pathway", selected_result['pathway'])
-                    with col2:
-                        st.metric("Input Genes", selected_result['gene_count'])
-                    with col3:
-                        st.metric("Network Nodes", selected_result['network_nodes'])
-                    with col4:
-                        st.metric("Network Edges", selected_result['network_edges'])
-                    
-                    # Additional metrics
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Density", selected_result['summary_stats'].get('Density', 'N/A'))
-                    with col2:
-                        avg_cluster = selected_result['summary_stats'].get('Avg Clustering', 'N/A')
-                        st.metric("Avg Clustering", f"{avg_cluster:.4f}" if isinstance(avg_cluster, (int, float)) else avg_cluster)
-                    with col3:
-                        st.metric("Is Connected", selected_result['summary_stats'].get('Is Connected', 'N/A'))
-                    with col4:
-                        st.metric("Components", selected_result['summary_stats'].get('Components', 'N/A'))
-                    
-                    st.divider()
-                    
-                    # Top hubs and bottlenecks
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.subheader("🎯 Top Hubs (Degree Centrality)")
-                        top_hubs = selected_result['centrality'].get('top_hubs', [])
-                        for i, hub in enumerate(top_hubs[:10], 1):
-                            degree = selected_result['analyzer'].degree_cent.get(hub, 0)
-                            st.markdown(f"**{i}. {hub}** (Degree: {degree:.4f})")
-                    
-                    with col2:
-                        st.subheader("🔄 Top Bottlenecks (Betweenness)")
-                        top_bottlenecks = selected_result['centrality'].get('top_bottlenecks', [])
-                        for i, bn in enumerate(top_bottlenecks[:10], 1):
-                            betweenness = selected_result['analyzer'].betweenness_cent.get(bn, 0)
-                            st.markdown(f"**{i}. {bn}** (Betweenness: {betweenness:.4f})")
-                    
-                    st.divider()
-                    
-                    # Visualizations
-                    st.subheader("📊 Visualizations")
-                    
-                    # Robustness curve
-                    if selected_result['robustness_fig']:
-                        st.plotly_chart(
-                            selected_result['robustness_fig'],
-                            use_container_width=True,
-                            key=f"robustness_{selected_pathway}"
-                        )
-                    
-                    # Network graph
-                    if selected_result['network_fig']:
-                        st.plotly_chart(
-                            selected_result['network_fig'],
-                            use_container_width=True,
-                            key=f"network_{selected_pathway}"
-                        )
-                    
-                    # Gene list
-                    with st.expander("🧬 Input Genes"):
-                        genes_str = ", ".join(selected_result['genes'][:50])
-                        if len(selected_result['genes']) > 50:
-                            genes_str += f" ... (+{len(selected_result['genes']) - 50} more)"
-                        st.write(genes_str)
-    
-    with tab3:
-        st.header("💾 Export Data")
-        
-        if not st.session_state.analysis_complete:
-            st.info("⬆️ Please run analysis first")
-        else:
-            st.subheader("Export Analysis Results")
-            
-            # Export options
-            export_format = st.radio(
-                "Select export format",
-                ["CSV", "JSON", "Excel"],
-                horizontal=True
+            network_names = list(st.session_state.state.networks.keys())
+            selected_network = st.selectbox(
+                "Select Network",
+                options=network_names,
+                key="individual_network_select"
             )
             
-            # Prepare export data
-            export_data = []
-            for r in st.session_state.pathway_results:
-                row = {
-                    'pathway': r['pathway'],
-                    'input_genes': len(r['genes']),
-                    'network_nodes': r['network_nodes'],
-                    'network_edges': r['network_edges'],
-                    'density': r['summary_stats'].get('Density', 'N/A'),
-                    'avg_clustering': r['summary_stats'].get('Avg Clustering', 'N/A'),
-                    'is_connected': r['summary_stats'].get('Is Connected', 'N/A'),
-                    'components': r['summary_stats'].get('Components', 'N/A'),
-                    'diameter': r['summary_stats'].get('Diameter', 'N/A'),
-                    'avg_path_length': r['summary_stats'].get('Avg Path Length', 'N/A'),
-                    'pval': r.get('pval', 'N/A'),
-                    'padj': r.get('padj', 'N/A'),
-                    'NES': r.get('NES', 'N/A'),
-                    'top_hubs': ";".join(r['centrality'].get('top_hubs', [])[:5]),
-                    'top_bottlenecks': ";".join(r['centrality'].get('top_bottlenecks', [])[:5]),
-                    'message': r['message']
-                }
-                export_data.append(row)
-            
-            export_df = pd.DataFrame(export_data)
-            
-            # Export buttons
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                csv_data = export_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download CSV",
-                    data=csv_data,
-                    file_name=f"netfragile_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-            
-            with col2:
-                json_data = export_df.to_json(orient='records', indent=2)
-                st.download_button(
-                    label="📥 Download JSON",
-                    data=json_data,
-                    file_name=f"netfragile_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
-            
-            with col3:
-                try:
-                    excel_data = io.BytesIO()
-                    export_df.to_excel(excel_data, index=False, engine='openpyxl')
-                    st.download_button(
-                        label="📥 Download Excel",
-                        data=excel_data.getvalue(),
-                        file_name=f"netfragile_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-                except ImportError:
-                    st.warning("Excel export requires openpyxl. Install with: pip install openpyxl")
-            
-            st.divider()
-            
-            # Export individual pathway data
-            st.subheader("Export Individual Pathway Data")
-            
-            if st.session_state.current_pathway:
-                current = st.session_state.current_pathway
+            if selected_network:
+                nd = st.session_state.state.networks[selected_network]
                 
-                # Centrality data
-                cent_data = {
-                    'node': [],
-                    'degree_centrality': [],
-                    'betweenness_centrality': [],
-                    'closeness_centrality': []
-                }
+                # Metrics
+                st.markdown("### 📊 Network Metrics")
+                cols = st.columns(4)
+                cols[0].metric("Nodes", nd.metrics.get('nodes', 0))
+                cols[1].metric("Edges", nd.metrics.get('edges', 0))
+                cols[2].metric("Density", f"{nd.metrics.get('density', 0):.4f}")
+                cols[3].metric("Avg Degree", f"{nd.metrics.get('avg_degree', 0):.2f}")
                 
-                for node in current['analyzer'].graph.nodes():
-                    cent_data['node'].append(node)
-                    cent_data['degree_centrality'].append(
-                        current['analyzer'].degree_cent.get(node, 0)
-                    )
-                    cent_data['betweenness_centrality'].append(
-                        current['analyzer'].betweenness_cent.get(node, 0)
-                    )
-                    cent_data['closeness_centrality'].append(
-                        current['analyzer'].closeness_cent.get(node, 0)
-                    )
+                # Centrality
+                st.markdown("### 🎯 Top Hubs & Bottlenecks")
+                if nd.degree_cent:
+                    top_hubs = sorted(nd.degree_cent.items(), key=lambda x: x[1], reverse=True)[:10]
+                    hub_genes = [n for n, v in top_hubs]
+                    st.markdown("**Top Hubs (by Degree Centrality):**")
+                    st.write(", ".join(f"`{g}`" for g in hub_genes[:10]))
                 
-                cent_df = pd.DataFrame(cent_data)
+                if nd.betweenness_cent:
+                    top_bottlenecks = sorted(nd.betweenness_cent.items(), key=lambda x: x[1], reverse=True)[:10]
+                    bottleneck_genes = [n for n, v in top_bottlenecks]
+                    st.markdown("**Top Bottlenecks (by Betweenness Centrality):**")
+                    st.write(", ".join(f"`{g}`" for g in bottleneck_genes[:10]))
                 
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    csv_cent = cent_df.to_csv(index=False)
-                    st.download_button(
-                        label=f"📥 Download {current['pathway']} Centrality Data (CSV)",
-                        data=csv_cent,
-                        file_name=f"{current['pathway']}_centrality.csv",
-                        mime="text/csv",
-                        use_container_width=True
+                # Robustness curves
+                st.markdown("### 📈 Robustness Curves")
+                if nd.rand_curve and nd.targ_curve:
+                    fig = go.Figure()
+                    
+                    x, y = nd.rand_curve
+                    fig.add_trace(go.Scatter(x=x, y=y, mode='lines+markers', 
+                                             name='Random Removal',
+                                             line=dict(color='green', width=3)))
+                    
+                    x, y = nd.targ_curve
+                    fig.add_trace(go.Scatter(x=x, y=y, mode='lines+markers',
+                                             name='Targeted Removal',
+                                             line=dict(color='red', width=3, dash='dash')))
+                    
+                    fig.update_layout(
+                        title=f'Robustness: {selected_network}',
+                        xaxis_title='Fraction Removed',
+                        yaxis_title='Network Integrity',
+                        height=500
                     )
+                    st.plotly_chart(fig, use_container_width=True)
                 
-                with col2:
-                    json_cent = cent_df.to_json(orient='records', indent=2)
-                    st.download_button(
-                        label=f"📥 Download {current['pathway']} Centrality Data (JSON)",
-                        data=json_cent,
-                        file_name=f"{current['pathway']}_centrality.json",
-                        mime="application/json",
-                        use_container_width=True
-                    )
+                # Network graph
+                st.markdown("### 🌐 Network Visualization")
+                network_fig = create_network_figure(nd)
+                st.plotly_chart(network_fig, use_container_width=True)
     
+    # TAB 3: Comparison
+    with tab3:
+        st.markdown("## 📊 Network Comparison")
+        
+        if not st.session_state.state.analysis_complete or len(st.session_state.state.networks) < 2:
+            st.info("Please upload and analyze at least 2 networks to compare.")
+        else:
+            # Overlay plot
+            st.markdown("### 📈 Overlay Robustness Curves")
+            curve_type = st.radio("Curve Type", ["Targeted Removal", "Random Removal"], horizontal=True)
+            
+            fig = create_robustness_figure(st.session_state.state.networks)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Similarity matrix
+            st.markdown("### 🔗 Network Similarity Matrix")
+            networks_data = {
+                name: {
+                    'targ_curve': nd.targ_curve,
+                    'rand_curve': nd.rand_curve,
+                    'graph': nd.graph
+                }
+                for name, nd in st.session_state.state.networks.items()
+            }
+            
+            comparator = NetworkComparator()
+            sim_matrix = comparator.calculate_similarity_matrix(networks_data)
+            st.dataframe(sim_matrix, use_container_width=True)
+            
+            # Metrics comparison
+            st.markdown("### 📊 Network Metrics Comparison")
+            metrics_data = []
+            for name, nd in st.session_state.state.networks.items():
+                metrics_data.append({
+                    'Network': name,
+                    'Nodes': nd.metrics.get('nodes', 0),
+                    'Edges': nd.metrics.get('edges', 0),
+                    'Density': f"{nd.metrics.get('density', 0):.4f}",
+                    'Avg Degree': f"{nd.metrics.get('avg_degree', 0):.2f}"
+                })
+            st.dataframe(pd.DataFrame(metrics_data), use_container_width=True)
+    
+    # TAB 4: Normalizing Targets
     with tab4:
-        st.header("ℹ️ Help & Documentation")
-        
+        st.markdown("## 🎯 Normalizing Target Discovery")
         st.markdown("""
-        ## 📖 About NetFragile
-        
-        **NetFragile** is a network robustness analysis tool that helps you understand
-        how biological networks respond to targeted disruptions.
-        
-        ### 🎯 Key Features
-        
-        - **CSV Ingestion**: Upload GSEA or similar pathway analysis results
-        - **Network Construction**: Builds PPI networks from STRING database
-        - **Centrality Analysis**: Identifies hubs and bottlenecks
-        - **Robustness Testing**: Simulates random vs. targeted attacks
-        - **Interactive Visualization**: Explore networks and robustness curves
-        - **Data Export**: Download results in multiple formats
-        
-        ### 📥 Input CSV Format
-        
-        Your CSV should contain at least:
-        - A `pathway` column with pathway names
-        - A `leadingEdge` column with semicolon-separated gene lists
-        
-        Example columns that will be used:
-        - `pathway`: Pathway name (e.g., "HALLMARK_ADIPOGENESIS")
-        - `leadingEdge`: Genes in the pathway (semicolon-separated)
-        - `pval`, `padj`, `NES`: Optional statistical values for display
-        
-        The app will extract genes from the `leadingEdge` column and build networks for each pathway.
-        
-        ### 🔬 How It Works
-        
-        1. **Upload**: Upload your CSV file with pathway data
-        2. **Parse**: The app extracts gene lists from each pathway
-        3. **Fetch**: For each pathway, fetches PPI data from STRING database
-        4. **Analyze**: Calculates network metrics and simulates attacks
-        5. **Visualize**: Generates interactive plots and tables
-        6. **Export**: Download results for further analysis
-        
-        ### 📊 Understanding the Results
-        
-        **Robustness Curve**: Shows how the network maintains integrity as nodes are removed.
-        - **Green line**: Random removal (non-specific drug effects)
-        - **Red dashed line**: Targeted removal of hubs (specific drug effects)
-        - Steeper decline = more vulnerable network
-        
-        **Network Graph**: Interactive visualization of the PPI network.
-        - Node size/color = degree (number of connections)
-        - Orange nodes = top hubs
-        - Hover for details
-        
-        **Centrality Metrics**:
-        - **Degree Centrality**: Number of connections (hubs)
-        - **Betweenness Centrality**: Controls information flow (bottlenecks)
-        - **Closeness Centrality**: Central position in network
-        
-        ### ⚙️ Settings
-        
-        **Species (TaxID)**: Select the organism for your analysis
-        
-        **STRING API Settings**:
-        - **Minimum Interaction Score**: Higher = more confident interactions only
-        - **Additional Nodes**: How many extra nodes to include in network expansion
-        
-        **Analysis Settings**:
-        - **Max Pathways**: Limit batch processing to prevent long wait times
-        
-        ### 🐛 Troubleshooting
-        
-        **No data found**: The genes may not have interactions in STRING for the selected species.
-        Try a different species or lower the interaction score threshold.
-        
-        **Slow processing**: STRING API has rate limits. For large gene sets, consider:
-        - Reducing the number of pathways
-        - Using a lower interaction score
-        - Adding fewer additional nodes
-        
-        **Empty CSV**: Make sure your CSV has a `leadingEdge` column with semicolon-separated genes.
-        
-        ### 📚 References
-        
-        - STRING Database: https://string-db.org/
-        - NetworkX: https://networkx.org/
-        - GSEA: https://www.gsea-msigdb.org/gsea/index.jsp
-        
-        ---
-        
-        **Version**: 2.0 (Streamlit Edition)  
-        **Built with**: Streamlit, NetworkX, Plotly, STRING API
+            Find genes in a target network whose removal makes its robustness profile
+            resemble a reference network. These are potential drug targets that can
+            "normalize" pathological network behavior.
         """)
+        
+        if not st.session_state.state.analysis_complete or len(st.session_state.state.networks) < 2:
+            st.info("Please upload and analyze at least 2 networks to find normalizing targets.")
+        else:
+            network_names = list(st.session_state.state.networks.keys())
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                target_network = st.selectbox("Target Network", options=network_names, key="target_net")
+            with col2:
+                reference_network = st.selectbox("Reference Network", 
+                                                 options=[n for n in network_names if n != target_network],
+                                                 key="reference_net")
+            
+            if target_network and reference_network:
+                target_nd = st.session_state.state.networks[target_network]
+                reference_nd = st.session_state.state.networks[reference_network]
+                
+                if st.button("🔍 Find Normalizing Targets", type="primary", use_container_width=True):
+                    with st.spinner("Analyzing genes... This may take a few minutes..."):
+                        finder = NormalizingTargetFinder(max_workers=4)
+                        
+                        target_data = {
+                            'graph': target_nd.graph,
+                            'targ_curve': target_nd.targ_curve
+                        }
+                        reference_curve = reference_nd.targ_curve
+                        
+                        results_df = finder.find_targets(
+                            target_data,
+                            reference_curve,
+                            strategy='degree',
+                            stop_threshold=0.05,
+                            min_network_size=5
+                        )
+                        
+                        if len(results_df) > 0:
+                            # Get reference genes
+                            reference_genes = list(reference_nd.graph.nodes())
+                            top_results = finder.get_top_targets(
+                                results_df, top_n=20, reference_genes=reference_genes
+                            )
+                            
+                            st.success(f"✅ Found {len(top_results)} potential normalizing targets")
+                            
+                            # Original similarity
+                            original_sim = results_df['similarity_score'].iloc[0] if len(results_df) > 0 else 0
+                            best_sim = top_results['similarity_score'].iloc[0] if len(top_results) > 0 else 0
+                            
+                            st.markdown(f"""
+                                <div class='success-box'>
+                                    <h4>📊 Results Summary</h4>
+                                    <p><strong>Original Similarity:</strong> {original_sim:.3f}</p>
+                                    <p><strong>Best Target Similarity:</strong> {best_sim:.3f}</p>
+                                    <p><strong>Improvement:</strong> {best_sim - original_sim:+.3f}</p>
+                                </div>
+                            """, unsafe_allow_html=True)
+                            
+                            # Top targets table
+                            st.markdown("### 🏆 Top Normalizing Targets")
+                            
+                            # Format dataframe
+                            display_df = top_results.copy()
+                            display_df['similarity_score'] = display_df['similarity_score'].round(3)
+                            display_df['effect_size'] = display_df['effect_size'].round(3)
+                            display_df['in_reference'] = display_df['in_reference'].apply(
+                                lambda x: "✅" if x else "❌"
+                            )
+                            
+                            st.dataframe(
+                                display_df[['rank', 'gene', 'similarity_score', 'effect_size', 'degree', 'in_reference']],
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                            
+                            # Before/After plot for top target
+                            if len(top_results) > 0:
+                                st.markdown("### 📈 Normalizing Effect Visualization")
+                                top_gene = top_results.iloc[0]
+                                before_after_fig = create_normalizing_figure(
+                                    target_nd, reference_nd, top_gene
+                                )
+                                st.plotly_chart(before_after_fig, use_container_width=True)
+                                
+                                st.markdown(f"""
+                                    <div class='target-highlight'>
+                                        Top Target: {top_gene['gene']} | 
+                                        Similarity Score: {top_gene['similarity_score']:.3f} | 
+                                        In Reference: {"✅" if top_gene['in_reference'] else "❌"}
+                                    </div>
+                                """, unsafe_allow_html=True)
+                            
+                            # Export
+                            st.markdown("### 💾 Export Results")
+                            csv = top_results.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Download CSV",
+                                data=csv,
+                                file_name=f"normalizing_targets_{target_network}_to_{reference_network}.csv",
+                                mime="text/csv"
+                            )
+                        else:
+                            st.warning("No normalizing targets found. Try with different networks.")
+    
+    # TAB 5: Network Graphs
+    with tab5:
+        st.markdown("## 🌐 Network Visualizations")
+        
+        if not st.session_state.state.analysis_complete or not st.session_state.state.networks:
+            st.info("Please upload and analyze files first in the Upload tab.")
+        else:
+            network_names = list(st.session_state.state.networks.keys())
+            selected_network = st.selectbox(
+                "Select Network",
+                options=network_names,
+                key="graph_network_select"
+            )
+            
+            if selected_network:
+                nd = st.session_state.state.networks[selected_network]
+                network_fig = create_network_figure(nd)
+                st.plotly_chart(network_fig, use_container_width=True)
+                
+                # Network info
+                st.markdown(f"""
+                    <div class='network-card'>
+                        <h4>{selected_network}</h4>
+                        <p><strong>Nodes:</strong> {nd.metrics.get('nodes', 0)} | 
+                           <strong>Edges:</strong> {nd.metrics.get('edges', 0)} | 
+                           <strong>Density:</strong> {nd.metrics.get('density', 0):.4f}</p>
+                    </div>
+                """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
